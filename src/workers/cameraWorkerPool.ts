@@ -98,8 +98,7 @@ export class CameraWorkerPool {
    * Much faster than terminate + init — reuses WASM modules.
    */
   async reinit(opts: CameraPoolInitOptions): Promise<{ numRowGroups: number }> {
-    this.pendingRequests.clear()
-    this.waitQueue = []
+    this.rejectAllPending('Camera worker pool reinitialized')
     this.nextRequestId = 0
 
     const readyPromises: Promise<CameraWorkerReady>[] = []
@@ -156,17 +155,29 @@ export class CameraWorkerPool {
   }
 
   terminate(): void {
+    this.rejectAllPending('Camera worker pool terminated')
     for (const pw of this.workers) {
       pw.worker.terminate()
     }
     this.workers = []
-    this.pendingRequests.clear()
-    this.waitQueue = []
   }
 
   // -------------------------------------------------------------------------
   // Internal
   // -------------------------------------------------------------------------
+
+  /** Reject all in-flight and queued promises so callers don't hang. */
+  private rejectAllPending(reason: string): void {
+    for (const [, { reject }] of this.pendingRequests) {
+      reject(new Error(reason))
+    }
+    this.pendingRequests.clear()
+
+    for (const { reject } of this.waitQueue) {
+      reject(new Error(reason))
+    }
+    this.waitQueue = []
+  }
 
   private dispatchToWorker(
     pw: PoolWorker,
