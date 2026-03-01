@@ -425,6 +425,16 @@ No heap impact — expected, since the optimization targets DOM mutation through
 
 ---
 
+## FIX-001: World-mode double-render jitter
+
+**Date:** 2026-03-01
+**Status:** Fixed
+**Files:** `src/components/LidarViewer/LidarViewer.tsx`
+
+Scene group pose matrix was updated via `useEffect` (fires after paint), while PointCloud's buffer was updated via `useFrame` (fires during Three.js render loop). This one-frame desync caused visible jitter when scrubbing in world mode. Fixed by moving the matrix update into `useFrame` via a `WorldPoseSync` component. See [R3F_RENDER_SYNC.md](./R3F_RENDER_SYNC.md) for the full analysis, desync diagram, and general lesson.
+
+---
+
 ## Rejected / Deferred
 
 ### computeBoundingSphere optimization

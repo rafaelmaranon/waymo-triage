@@ -153,14 +153,33 @@ function PovController({
 // World-mode helpers
 // ---------------------------------------------------------------------------
 
-const _identity = new THREE.Matrix4()
+/** Reusable temp matrix — avoids allocation in useFrame hot path */
+const _poseMatrix = new THREE.Matrix4()
 
-/** Convert Waymo row-major 4×4 to Three.js column-major Matrix4 */
-function poseToMatrix4(pose: number[]): THREE.Matrix4 {
-  const m = new THREE.Matrix4()
-  m.fromArray(pose)
-  m.transpose() // Waymo row-major → Three.js column-major
-  return m
+/**
+ * WorldPoseSync — applies vehicle pose to the scene group inside useFrame.
+ *
+ * This MUST run in useFrame (not useEffect) so the group matrix updates
+ * in the same Three.js render tick as PointCloud's buffer write.
+ * A useEffect would fire after paint, causing a one-frame desync where
+ * new point data renders under the old pose — visible as jitter in world mode.
+ * See docs/R3F_RENDER_SYNC.md for the full analysis.
+ */
+function WorldPoseSync({ groupRef }: { groupRef: React.RefObject<THREE.Group | null> }) {
+  useFrame(() => {
+    const group = groupRef.current
+    if (!group) return
+    const { worldMode, currentFrame } = useSceneStore.getState()
+    const pose = currentFrame?.vehiclePose ?? null
+    if (worldMode && pose) {
+      _poseMatrix.fromArray(pose).transpose() // Waymo row-major → Three.js column-major
+      group.matrix.copy(_poseMatrix)
+    } else {
+      group.matrix.identity()
+    }
+    group.matrixWorldNeedsUpdate = true
+  })
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +206,6 @@ export default function LidarViewer() {
   const setActiveCam = useSceneStore((s) => s.actions.setActiveCam)
   const worldMode = useSceneStore((s) => s.worldMode)
   const toggleWorldMode = useSceneStore((s) => s.actions.toggleWorldMode)
-  const vehiclePose = useSceneStore((s) => s.currentFrame?.vehiclePose ?? null)
   const orbitRef = useRef<any>(null)
   const sceneGroupRef = useRef<THREE.Group>(null)
   const returningRef = useRef(false)
@@ -199,17 +217,6 @@ export default function LidarViewer() {
     [cameraCalibrations],
   )
   const activeCalib = activeCam !== null ? calibMap.get(activeCam) ?? null : null
-
-  // Update scene group matrix when world mode or pose changes
-  useEffect(() => {
-    if (!sceneGroupRef.current) return
-    if (worldMode && vehiclePose) {
-      sceneGroupRef.current.matrix.copy(poseToMatrix4(vehiclePose))
-    } else {
-      sceneGroupRef.current.matrix.copy(_identity)
-    }
-    sceneGroupRef.current.matrixWorldNeedsUpdate = true
-  }, [worldMode, vehiclePose])
 
   // ESC to exit POV
   useEffect(() => {
@@ -240,6 +247,9 @@ export default function LidarViewer() {
         <ambientLight intensity={0.3} />
         <directionalLight position={[50, -30, 80]} intensity={1.0} />
         <directionalLight position={[-30, 40, 20]} intensity={0.4} />
+
+        {/* Sync scene group matrix with vehicle pose in the render loop */}
+        <WorldPoseSync groupRef={sceneGroupRef} />
 
         {/* Scene group: transformed by vehiclePose in world mode */}
         <group ref={sceneGroupRef} matrixAutoUpdate={false}>
