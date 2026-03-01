@@ -9,7 +9,7 @@
  * Waymo coordinate frame: X=forward, Y=left, Z=up.
  */
 
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useSceneStore, getObjectTrajectories, hasLaserAssociation, getPoseByFrameIndex } from '../../stores/useSceneStore'
 import { BoxType, BOX_TYPE_COLORS, HIGHLIGHT_COLOR } from '../../types/waymo'
@@ -235,6 +235,21 @@ function TrajectoryTrail({ objectId, type, currentFrame, trailLength, worldMode 
 
     return new THREE.BufferGeometry().setFromPoints(points)
   }, [objectId, currentFrame, trailLength, worldMode])
+
+  // Dispose previous geometry when replaced or on unmount
+  const prevGeomRef = useRef<THREE.BufferGeometry | null>(null)
+  useEffect(() => {
+    if (prevGeomRef.current && prevGeomRef.current !== geometry) {
+      prevGeomRef.current.dispose()
+    }
+    prevGeomRef.current = geometry
+    return () => {
+      if (prevGeomRef.current) {
+        prevGeomRef.current.dispose()
+        prevGeomRef.current = null
+      }
+    }
+  }, [geometry])
 
   if (!geometry) return null
 

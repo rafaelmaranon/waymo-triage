@@ -71,20 +71,18 @@ function CameraFrustum({
         <lineBasicMaterial color={lineColor} transparent opacity={lineOpacity} />
       </lineSegments>
 
-      {/* Pyramid edges — hover/active only */}
-      {highlighted && (
-        <lineSegments>
-          <bufferGeometry>
-            <bufferAttribute
-              attach="attributes-position"
-              array={edgePositions}
-              count={edgePositions.length / 3}
-              itemSize={3}
-            />
-          </bufferGeometry>
-          <lineBasicMaterial color={lineColor} />
-        </lineSegments>
-      )}
+      {/* Pyramid edges — always mounted, toggle visibility to avoid re-creating meshes */}
+      <lineSegments visible={highlighted}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            array={edgePositions}
+            count={edgePositions.length / 3}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color={lineColor} />
+      </lineSegments>
     </group>
   )
 }
