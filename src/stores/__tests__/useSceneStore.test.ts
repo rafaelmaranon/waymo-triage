@@ -368,12 +368,144 @@ describe('useSceneStore', () => {
     })
   })
 
+  describe('boxRenderer state (OPT-005)', () => {
+    it('defaults to canvas', () => {
+      expect(state().boxRenderer).toBe('canvas')
+    })
+
+    it('setBoxRenderer switches to svg', () => {
+      actions().setBoxRenderer('svg')
+      expect(state().boxRenderer).toBe('svg')
+    })
+
+    it('setBoxRenderer switches back to canvas', () => {
+      actions().setBoxRenderer('canvas')
+      expect(state().boxRenderer).toBe('canvas')
+    })
+  })
+
+  describe('setHoveredBox cross-modal highlight', () => {
+    it('clear: null id clears all highlights', () => {
+      actions().setHoveredBox(null, null)
+      expect(state().hoveredBoxId).toBeNull()
+      expect(state().highlightedCameraBoxIds.size).toBe(0)
+      expect(state().highlightedLaserBoxId).toBeNull()
+    })
+
+    it('laser source: sets hoveredBoxId', () => {
+      actions().setHoveredBox('laser_obj_1', 'laser')
+      expect(state().hoveredBoxId).toBe('laser_obj_1')
+      // No associations in fixture → empty camera highlights
+      expect(state().highlightedLaserBoxId).toBeNull()
+      actions().setHoveredBox(null, null) // cleanup
+    })
+
+    it('camera source: sets hoveredBoxId', () => {
+      actions().setHoveredBox('cam_obj_1', 'camera')
+      expect(state().hoveredBoxId).toBe('cam_obj_1')
+      // No associations in fixture → null laser highlight
+      expect(state().highlightedLaserBoxId).toBeNull()
+      actions().setHoveredBox(null, null) // cleanup
+    })
+
+    it('clear after hover restores all to null/empty', () => {
+      actions().setHoveredBox('laser_obj_1', 'laser')
+      expect(state().hoveredBoxId).not.toBeNull()
+      actions().setHoveredBox(null, null)
+      expect(state().hoveredBoxId).toBeNull()
+      expect(state().highlightedCameraBoxIds.size).toBe(0)
+      expect(state().highlightedLaserBoxId).toBeNull()
+    })
+  })
+
+  describe('sensor toggles', () => {
+    it('toggleSensor removes a visible sensor', () => {
+      expect(state().visibleSensors.has(1)).toBe(true)
+      actions().toggleSensor(1)
+      expect(state().visibleSensors.has(1)).toBe(false)
+      actions().toggleSensor(1) // restore
+    })
+
+    it('toggleSensor adds back a hidden sensor', () => {
+      actions().toggleSensor(3)
+      expect(state().visibleSensors.has(3)).toBe(false)
+      actions().toggleSensor(3)
+      expect(state().visibleSensors.has(3)).toBe(true)
+    })
+  })
+
+  describe('boxMode', () => {
+    it('setBoxMode changes mode', () => {
+      actions().setBoxMode('model')
+      expect(state().boxMode).toBe('model')
+      actions().setBoxMode('box') // restore
+    })
+
+    it('cycleBoxMode cycles off → box → model → off', () => {
+      actions().setBoxMode('off')
+      actions().cycleBoxMode()
+      expect(state().boxMode).toBe('box')
+      actions().cycleBoxMode()
+      expect(state().boxMode).toBe('model')
+      actions().cycleBoxMode()
+      expect(state().boxMode).toBe('off')
+      actions().setBoxMode('box') // restore
+    })
+  })
+
+  describe('colormapMode', () => {
+    it('setColormapMode changes mode', () => {
+      actions().setColormapMode('height')
+      expect(state().colormapMode).toBe('height')
+      actions().setColormapMode('intensity') // restore
+    })
+  })
+
+  describe('trailLength', () => {
+    it('setTrailLength clamps to [0, 50]', () => {
+      actions().setTrailLength(25)
+      expect(state().trailLength).toBe(25)
+      actions().setTrailLength(-5)
+      expect(state().trailLength).toBe(0)
+      actions().setTrailLength(100)
+      expect(state().trailLength).toBe(50)
+      actions().setTrailLength(10) // restore
+    })
+  })
+
+  describe('pointOpacity', () => {
+    it('setPointOpacity clamps to [0.1, 1]', () => {
+      actions().setPointOpacity(0.5)
+      expect(state().pointOpacity).toBe(0.5)
+      actions().setPointOpacity(0.01)
+      expect(state().pointOpacity).toBe(0.1)
+      actions().setPointOpacity(2.0)
+      expect(state().pointOpacity).toBe(1)
+      actions().setPointOpacity(0.85) // restore
+    })
+  })
+
   describe('reset', () => {
     it('returns to idle state', () => {
       actions().reset()
       expect(state().status).toBe('idle')
       expect(state().totalFrames).toBe(0)
       expect(state().currentFrame).toBeNull()
+    })
+
+    it('reset restores boxRenderer to canvas', () => {
+      // First change it
+      actions().setBoxRenderer('svg')
+      expect(state().boxRenderer).toBe('svg')
+      actions().reset()
+      expect(state().boxRenderer).toBe('canvas')
+    })
+
+    it('reset restores highlight state', () => {
+      actions().reset()
+      expect(state().hoveredBoxId).toBeNull()
+      expect(state().highlightedCameraBoxIds.size).toBe(0)
+      expect(state().highlightedLaserBoxId).toBeNull()
     })
   })
 })

@@ -29,7 +29,8 @@ interface Transform {
   offsetY: number
 }
 
-function computeTransform(
+/** Exported for testing — maps image pixels → display pixels (xMidYMid slice) */
+export function computeTransform(
   displayW: number,
   displayH: number,
   imgW: number,

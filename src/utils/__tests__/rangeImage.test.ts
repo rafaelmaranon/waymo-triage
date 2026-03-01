@@ -307,6 +307,103 @@ describe('convertAllSensors()', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Tests: Edge cases
+// ---------------------------------------------------------------------------
+
+describe('edge cases', () => {
+  it('all-invalid range image produces 0 points', () => {
+    const allInvalid: RangeImage = {
+      shape: [3, 4, 4],
+      values: new Array(3 * 4 * 4).fill(0), // all range = 0 → invalid
+    }
+    const calib: LidarCalibration = {
+      laserName: 99,
+      extrinsic: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      beamInclinationValues: null,
+      beamInclinationMin: -0.3,
+      beamInclinationMax: 0.3,
+    }
+    const cloud = convertRangeImageToPointCloud(allInvalid, calib)
+    expect(cloud.pointCount).toBe(0)
+    expect(cloud.positions.length).toBe(0)
+  })
+
+  it('single-pixel valid range image produces 1 point', () => {
+    const singlePixel: RangeImage = {
+      shape: [1, 1, 4],
+      values: [10.0, 0.5, 0.1, 0], // range=10, intensity=0.5, elongation=0.1
+    }
+    const calib: LidarCalibration = {
+      laserName: 99,
+      extrinsic: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      beamInclinationValues: null,
+      beamInclinationMin: 0,
+      beamInclinationMax: 0,
+    }
+    const cloud = convertRangeImageToPointCloud(singlePixel, calib)
+    expect(cloud.pointCount).toBe(1)
+    expect(cloud.positions.length).toBe(POINT_STRIDE)
+    // With zero inclination and identity extrinsic, point should be on the XY plane
+    const z = cloud.positions[2]
+    expect(Math.abs(z)).toBeLessThan(0.01)
+  })
+
+  it('convertAllSensors with empty map returns 0 points', () => {
+    const empty = new Map<number, RangeImage>()
+    const result = convertAllSensors(empty, calibrations)
+    expect(result.totalPointCount).toBe(0)
+    expect(result.perSensor.size).toBe(0)
+  })
+
+  it('convertAllSensors with single sensor', () => {
+    const single = new Map<number, RangeImage>()
+    single.set(1, topRangeImage)
+    const result = convertAllSensors(single, calibrations)
+    expect(result.perSensor.size).toBe(1)
+    expect(result.perSensor.has(1)).toBe(true)
+    expect(result.totalPointCount).toBe(result.perSensor.get(1)!.pointCount)
+  })
+
+  it('convertAllSensors skips sensor without calibration', () => {
+    const withUnknown = new Map<number, RangeImage>()
+    withUnknown.set(1, topRangeImage) // has calibration
+    withUnknown.set(99, topRangeImage) // no calibration for sensor 99
+    const result = convertAllSensors(withUnknown, calibrations)
+    // Should only have sensor 1 (sensor 99 silently skipped)
+    expect(result.perSensor.has(1)).toBe(true)
+    expect(result.perSensor.has(99)).toBe(false)
+  })
+
+  it('negative range values are filtered out', () => {
+    const negRange: RangeImage = {
+      shape: [2, 2, 4],
+      values: [
+        -5.0, 0.5, 0, 0,   // invalid (negative)
+        -1.0, 0.5, 0, 0,   // invalid (negative)
+        8.0,  0.5, 0, 0,   // valid
+        -0.1, 0.5, 0, 0,   // invalid (negative)
+      ],
+    }
+    const calib: LidarCalibration = {
+      laserName: 99,
+      extrinsic: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      beamInclinationValues: null,
+      beamInclinationMin: -0.1,
+      beamInclinationMax: 0.1,
+    }
+    const cloud = convertRangeImageToPointCloud(negRange, calib)
+    expect(cloud.pointCount).toBe(1)
+  })
+
+  it('output has no NaN or Infinity values', () => {
+    const cloud = convertRangeImageToPointCloud(topRangeImage, calibrations.get(1)!)
+    for (let i = 0; i < cloud.positions.length; i++) {
+      expect(Number.isFinite(cloud.positions[i])).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Export test data for GPU comparison tests
 // ---------------------------------------------------------------------------
 
