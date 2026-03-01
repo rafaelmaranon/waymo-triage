@@ -179,7 +179,7 @@ function Header() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '12px 24px',
+      padding: '8px 24px',
       background: colors.bgSurface,
       borderBottom: `1px solid ${colors.border}`,
       flexShrink: 0,
@@ -200,7 +200,6 @@ function Header() {
 
       {/* Segment selector — only shown when multiple segments available */}
       {availableSegments.length > 1 && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         <button
           onClick={() => {
@@ -283,22 +282,6 @@ function Header() {
           }}
           title="Next segment"
         >&#9654;</button>
-        </div>
-        {currentSegment && (
-          <div style={{
-            fontSize: '10px',
-            fontFamily: fonts.mono,
-            color: colors.textDim,
-            maxWidth: '360px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            cursor: 'default',
-            userSelect: 'all',
-          }} title={currentSegment}>
-            {currentSegment}
-          </div>
-        )}
         </div>
       )}
 

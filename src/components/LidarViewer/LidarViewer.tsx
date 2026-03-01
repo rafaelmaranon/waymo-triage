@@ -9,7 +9,7 @@
  * to that camera's POV. Press ESC or click the button to return.
  */
 
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
@@ -171,6 +171,7 @@ export default function LidarViewer() {
   const setActiveCam = useSceneStore((s) => s.actions.setActiveCam)
   const orbitRef = useRef<any>(null)
   const returningRef = useRef(false)
+  const [panelOpen, setPanelOpen] = useState(true)
 
   // Parse calibrations once
   const calibMap = useMemo(
@@ -245,7 +246,7 @@ export default function LidarViewer() {
         </GizmoHelper>
       </Canvas>
 
-      {/* Layer control overlay — single frosted panel */}
+      {/* Layer control overlay */}
       <div style={{
         position: 'absolute',
         top: 12,
@@ -254,27 +255,49 @@ export default function LidarViewer() {
         flexDirection: 'column',
         gap: 2,
         pointerEvents: 'auto',
-        width: 172,
+        width: panelOpen ? 172 : 'auto',
         padding: 6,
         backgroundColor: 'rgba(26, 31, 53, 0.75)',
         borderRadius: radius.md,
         backdropFilter: 'blur(12px)',
         border: `1px solid ${colors.border}`,
       }}>
-        {/* ── LIDAR group ── */}
-        <div style={{
-          fontSize: '9px',
-          fontFamily: fonts.sans,
-          fontWeight: 600,
-          color: colors.textDim,
-          letterSpacing: '1.2px',
-          textTransform: 'uppercase',
-          padding: '2px 4px 2px',
-        }}>
-          LiDAR
-        </div>
+        {/* ── Header: toggle row ── */}
+        <button
+          onClick={() => setPanelOpen((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 6,
+            padding: '2px 4px',
+            border: 'none',
+            borderRadius: radius.sm,
+            cursor: 'pointer',
+            backgroundColor: 'transparent',
+          }}
+          title={panelOpen ? 'Collapse panel' : 'Expand panel'}
+        >
+          <span style={{
+            fontSize: '9px',
+            fontFamily: fonts.sans,
+            fontWeight: 600,
+            color: colors.textDim,
+            letterSpacing: '1.2px',
+            textTransform: 'uppercase',
+          }}>
+            Layers
+          </span>
+          <span style={{
+            fontSize: '8px',
+            color: colors.textDim,
+            lineHeight: 1,
+          }}>
+            {panelOpen ? '▲' : '▼'}
+          </span>
+        </button>
 
-        {SENSOR_INFO.map(({ id, label, color }) => {
+        {panelOpen && <>{SENSOR_INFO.map(({ id, label, color }) => {
           const active = visibleSensors.has(id)
           const cloud = sensorClouds?.get(id)
           const pts = cloud ? cloud.pointCount.toLocaleString() : '—'
@@ -520,6 +543,7 @@ export default function LidarViewer() {
             </div>
           </>)}
         </>}
+        </>}
       </div>
 
       {/* POV mode indicator + exit button */}
@@ -565,6 +589,7 @@ export default function LidarViewer() {
           </button>
         </div>
       )}
+
     </div>
   )
 }
