@@ -136,18 +136,15 @@ Measure where the bytes actually live before optimizing. The heap snapshot showe
 | V8 heap limit | 4,096 MB | 4,096 MB | — |
 | Heap utilization | 101% (over limit) | 99.9% | — |
 
-### Heap breakdown (estimated, 199 frames cached)
+### Heap breakdown (measured via snapshot analysis, see OPT-003 for methodology)
 
-| Category | Estimated size | Notes |
+| Category | Measured size | Notes |
 |---|---|---|
-| LiDAR point clouds | ~950 MB | 170K pts × 7 floats × 4B × 199 frames |
-| Camera JPEG ArrayBuffers | ~200 MB | 5 cameras × ~200KB avg × 199 frames |
-| Bounding box rows | ~50 MB | ~30 boxes/frame × metadata × 199 frames |
-| Poses + calibrations | ~10 MB | 4×4 matrices + camera params |
-| Parquet metadata + buffers | ~100 MB | Row group decompression buffers |
-| Three.js scene graph | ~50 MB | Geometries, materials, textures |
-| React fiber tree + Zustand | ~30 MB | Component tree, store subscriptions |
-| Other (V8 overhead, strings) | ~2,700 MB | GC metadata, hidden classes, etc. |
+| LiDAR merged positions | ~772 MB | **DUPLICATE** of sensorClouds (199 × ~3.9 MB) |
+| LiDAR per-sensor clouds | ~772 MB | 5 sensors × 199 frames (canonical data) |
+| Camera JPEG ArrayBuffers | ~312 MB | 5 cameras × ~200-400KB × 199 frames |
+| Box data (lidar + camera) | ~27 MB | ~270 rows/frame × JS objects with string keys |
+| V8 overhead | ~2,223 MB | GC metadata, hidden classes, PerformanceMeasure, etc. |
 
 ### Next steps for memory reduction
 
@@ -156,6 +153,139 @@ The heap is dominated by the **frame cache holding all 199 frames**. The two opt
 - **LRU frame cache** — keep only N frames around the playhead (e.g., ±30), evict distant frames. Requires re-fetching on seek but drops steady-state memory proportionally.
 - **SharedArrayBuffer for lidar** — share point cloud buffers between workers and main thread without copying. Halves the lidar memory footprint.
 - **Streaming camera JPEGs** — don't cache all 199 frames of camera ArrayBuffers; decode on demand from Parquet row groups with a small LRU.
+
+---
+
+## OPT-003: Frame cache memory analysis
+
+**Date:** 2026-03-01
+**Status:** Analysis only (no code changes)
+
+### 1. What's stored per frame
+
+Each cached frame (`FrameData` in `useSceneStore.ts:86`) contains:
+
+| Field | Type | Avg size/frame | Notes |
+|---|---|---|---|
+| `pointCloud.positions` | `Float32Array` | **3,974 KB** | Merged all-sensor xyz+attrs, 7 floats × ~170K pts |
+| `sensorClouds` | `Map<number, PointCloud>` | **3,974 KB** | 5 separate Float32Arrays (TOP ~3.5MB, others ~100KB each) |
+| `cameraImages` | `Map<number, ArrayBuffer>` | **1,601 KB** | 5 JPEG ArrayBuffers (~200-400KB each) |
+| `boxes` | `ParquetRow[]` | **~75 KB** | ~150 lidar box rows with string keys |
+| `cameraBoxes` | `ParquetRow[]` | **~65 KB** | ~130 camera box rows with string keys |
+| `vehiclePose` | `number[]` | **0.1 KB** | 16-element row-major 4×4 matrix |
+| `timestamp` | `bigint` | **0.02 KB** | — |
+| **Total per frame** | | **~9,689 KB (9.5 MB)** | |
+| **× 199 frames** | | **~1,883 MB** | Cached frame data alone |
+
+**Critical finding: `pointCloud` and `sensorClouds` are duplicates.** Both contain the same xyz data — `pointCloud.positions` is a single merged Float32Array while `sensorClouds` holds the same points split by sensor. These are separate copies (different `ArrayBuffer` backing stores, confirmed by `buffer ===` check). This duplication costs **~3,974 KB × 199 = ~772 MB**.
+
+### 2. Prefetch strategy
+
+```
+loadDataset() → loads first 2 row groups (cold start)
+             → calls prefetchAllRowGroups() + prefetchAllCameraRowGroups()
+                → dispatches ALL remaining row groups at once
+                → WorkerPool (3 workers) processes them in parallel
+                → each RG yields ~51 frames → 4 RGs = 199 frames
+```
+
+- **Trigger:** called once after initial load completes (`useSceneStore.ts:508`)
+- **Scope:** all row groups — no eviction, no limit
+- **Concurrency:** 3 lidar workers + 2 camera workers
+- **Row groups:** 4 lidar RGs (~51 frames each), 4 camera RGs
+- **Guard:** `prefetchStarted` flag prevents duplicate calls (React StrictMode)
+- **Cache miss behavior:** silently ignores navigation to uncached frames (`loadFrame` returns early at line 547)
+
+### 3. Load timing: hot vs cold
+
+| Path | Duration | What happens |
+|---|---|---|
+| **Cold (row group decompress)** | **4,747 ms** | Parquet BROTLI decompress + range image→xyz conversion for 2 RGs (~102 frames). Runs in worker. |
+| **Per-frame conversion** | **4.8 ms** | `convertAllSensors()` — spherical→cartesian for 170K points (in worker). |
+| **Cache hit (hot path)** | **3.5–23 ms** | `frameCache.get()` + Zustand `set()` + React reconcile. No I/O, no conversion. |
+
+Cold row group decompress is **~200× slower** than cache hit. This is the cost of an LRU eviction miss — the user would see a multi-second stall when seeking to an evicted region.
+
+### 4. Heap breakdown by object type
+
+Full segment loaded (199 frames, all cached). `take_memory_snapshot` analysis:
+
+**By V8 node type:**
+
+| Type | Size | % of heap | Count |
+|---|---|---|---|
+| `native` (ArrayBufferData) | 4,046 MB | 98.5% | 94,410 |
+| `array` (object properties) | 26 MB | 0.6% | 55,444 |
+| `code` | 12 MB | 0.3% | 92,833 |
+| `number` (heap numbers) | 7 MB | 0.2% | 646,567 |
+| `object` | 5 MB | 0.1% | 179,685 |
+| Everything else | 10 MB | 0.3% | — |
+| **Total** | **4,106 MB** | | **1,487,216** |
+
+**ArrayBuffer size distribution (2,383 buffers = 4,020 MB):**
+
+| Bucket | Count | Size | % | What |
+|---|---|---|---|---|
+| > 3 MB | 396 | 1,539 MB | 38% | Merged `pointCloud.positions` (~3.9 MB × 199) + TOP sensor clouds |
+| 1–3 MB | 790 | 2,168 MB | 54% | Per-sensor cloud Float32Arrays (4 smaller sensors × 199, plus some TOP) |
+| 100 KB – 1 MB | 1,003 | 312 MB | 8% | Camera JPEG ArrayBuffers (~200-400 KB × 5 × 199) |
+| < 100 KB | 194 | 0.2 MB | 0% | Parquet metadata, small buffers |
+
+**Revised heap breakdown (measured):**
+
+| Category | Measured size | Notes |
+|---|---|---|
+| LiDAR merged positions | ~772 MB | 199 × ~3.9 MB (DUPLICATE — same data as sensorClouds) |
+| LiDAR per-sensor clouds | ~772 MB | 199 × 5 sensors (the canonical data) |
+| Camera JPEG ArrayBuffers | ~312 MB | 199 × 5 cameras × ~200-400 KB |
+| Box data (lidar + camera) | ~27 MB | 199 × ~140 KB (JS objects with string keys) |
+| **Subtotal: frame cache** | **~1,883 MB** | |
+| V8 overhead | ~2,223 MB | GC metadata, hidden classes, PerformanceMeasure objects, etc. |
+| **Total** | **~4,106 MB** | |
+
+### 5. Proposed cache strategies
+
+#### Strategy A: Eliminate pointCloud/sensorClouds duplication
+
+**Approach:** Stop caching the merged `pointCloud.positions`. Instead, derive it on-demand in the `useFrame` callback by iterating `sensorClouds` (which already holds all points). The "all visible" fast path in `PointCloud.tsx` would merge sensor clouds instead of using a pre-merged buffer.
+
+| Pros | Cons |
+|---|---|
+| Saves ~772 MB immediately (19% of heap) | Adds ~2ms merge overhead per dirty frame (170K pts memcpy) |
+| Zero architectural change — same cache structure | Marginal increase in useFrame dirty cost (13.4→~15.4 ms, still under 16.6ms) |
+| No risk of seek latency (all frames still cached) | |
+
+**Estimated impact:** 4,106 MB → ~3,334 MB. Moves heap well below V8 4GB limit.
+
+#### Strategy B: LRU frame cache with row-group-granularity eviction
+
+**Approach:** Keep a sliding window of N row groups around the playhead (~102 frames for 2 RGs). Evict distant row groups when memory exceeds a threshold. On seek to an evicted region, re-request the row group from the worker (cold decompress).
+
+| Pros | Cons |
+|---|---|
+| Caps memory at ~N/4 of full segment | 4.7s stall on seek to evicted region (cold decompress) |
+| Scales to longer segments (>199 frames) | Complexity: eviction policy, re-fetch logic, buffer bar UX |
+| Can tune N based on available memory | Breaks instant seek — user experience regression |
+
+**Estimated impact:** At 2 RGs cached (~102 frames): 4,106 MB → ~2,100 MB.
+
+#### Strategy C: Strategy A + deferred camera image caching
+
+**Approach:** Combine deduplication (Strategy A) with lazy camera image loading. Don't prefetch camera JPEGs for all 199 frames. Instead, keep a small LRU of ~30 camera frames around the playhead. Camera images are smaller per-frame (~1.6 MB for 5 cameras) but add up to 312 MB total.
+
+| Pros | Cons |
+|---|---|
+| Saves ~772 MB (dedup) + ~260 MB (camera LRU) = ~1,032 MB | Camera images may flash/lag on fast seek |
+| Still instant seek for lidar (all frames cached) | Two different cache strategies to maintain |
+| Camera row groups are fast to re-decode (~500ms) | |
+
+**Estimated impact:** 4,106 MB → ~3,074 MB.
+
+### Recommendation
+
+**Strategy A is the clear first step.** It's a surgical change (modify worker output + PointCloud.tsx fast path), saves 772 MB with no user-visible impact, and keeps instant seek. The 2ms merge overhead fits within frame budget (15.4 ms < 16.6 ms).
+
+Strategy B should be deferred — the 4.7s cold decompress stall is a significant UX regression that requires careful prefetch-ahead logic and loading indicators. It's only needed if segments grow beyond ~300 frames.
 
 ---
 
