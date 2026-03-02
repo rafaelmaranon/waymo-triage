@@ -70,6 +70,10 @@ const _povPoseQuat = new THREE.Quaternion()
 const _povWorldQuat = new THREE.Quaternion()
 const _povVehicleQuat = new THREE.Quaternion()
 
+/** Temp vector for return animation lookAt interpolation */
+const _returnLookAt = new THREE.Vector3()
+const _returnDir = new THREE.Vector3()
+
 function PovController({
   targetCalib,
   orbitRef,
@@ -81,9 +85,11 @@ function PovController({
   returningRef: React.MutableRefObject<boolean>
 }) {
   const { camera } = useThree()
-  const savedState = useRef<{ pos: THREE.Vector3; quat: THREE.Quaternion; fov: number; target: THREE.Vector3 } | null>(null)
+  const savedState = useRef<{ pos: THREE.Vector3; fov: number; target: THREE.Vector3 } | null>(null)
   /** When non-null we're animating back to the saved orbital view */
-  const returnTarget = useRef<{ pos: THREE.Vector3; quat: THREE.Quaternion; fov: number; target: THREE.Vector3 } | null>(null)
+  const returnTarget = useRef<{ pos: THREE.Vector3; fov: number; target: THREE.Vector3 } | null>(null)
+  /** Intermediate lookAt point — lerped each frame for smooth orientation */
+  const returnLookAt = useRef<THREE.Vector3 | null>(null)
 
   // Save orbital camera state when entering POV
   useEffect(() => {
@@ -93,13 +99,13 @@ function PovController({
       if (returnTarget.current) {
         savedState.current = returnTarget.current
         returnTarget.current = null
+        returnLookAt.current = null
         returningRef.current = false
       }
-      // First POV entry — save current orbital camera state (including quaternion!)
+      // First POV entry — save current orbital camera state
       if (!savedState.current) {
         savedState.current = {
           pos: camera.position.clone(),
-          quat: camera.quaternion.clone(),
           fov: (camera as THREE.PerspectiveCamera).fov,
           target: orbitRef.current?.target?.clone() ?? new THREE.Vector3(),
         }
@@ -110,11 +116,33 @@ function PovController({
   // Start return animation when leaving POV
   useEffect(() => {
     if (!targetCalib && savedState.current) {
-      returnTarget.current = savedState.current
+      const { worldMode, currentFrame } = useSceneStore.getState()
+      const pose = currentFrame?.vehiclePose ?? null
+
+      // In world mode, return to chase-cam relative to current vehicle pose
+      // (not the stale saved position from before POV entry)
+      if (worldMode && pose) {
+        _povPoseMat.fromArray(pose).transpose()
+        returnTarget.current = {
+          pos: CHASE_CAM_POSITION.clone().applyMatrix4(_povPoseMat),
+          fov: savedState.current.fov,
+          target: CHASE_CAM_TARGET.clone().applyMatrix4(_povPoseMat),
+        }
+      } else {
+        returnTarget.current = savedState.current
+      }
+
+      // Initialize intermediate lookAt from camera's current forward direction.
+      // This ensures the orientation lerp starts from where the camera is actually
+      // looking, avoiding jarring quaternion slerp artifacts.
+      camera.getWorldDirection(_returnDir)
+      const dist = returnTarget.current.pos.distanceTo(returnTarget.current.target)
+      returnLookAt.current = camera.position.clone().add(_returnDir.multiplyScalar(Math.max(dist, 5)))
+
       returningRef.current = true
       savedState.current = null
     }
-  }, [targetCalib, returningRef])
+  }, [targetCalib, camera, returningRef])
 
   // Animate: either toward POV target or back to orbital view
   useFrame(() => {
@@ -154,22 +182,34 @@ function PovController({
       return
     }
 
-    if (returnTarget.current) {
+    if (returnTarget.current && returnLookAt.current) {
       // ---- Animating back to orbital view ----
       const rt = returnTarget.current
+
+      // In world mode, continuously recompute return target relative to
+      // the current vehicle pose — the vehicle keeps moving during playback.
+      const { worldMode: wm, currentFrame: cf } = useSceneStore.getState()
+      const returnPose = cf?.vehiclePose ?? null
+      if (wm && returnPose) {
+        _povPoseMat.fromArray(returnPose).transpose()
+        rt.pos.copy(CHASE_CAM_POSITION).applyMatrix4(_povPoseMat)
+        rt.target.copy(CHASE_CAM_TARGET).applyMatrix4(_povPoseMat)
+      }
 
       camera.position.lerp(rt.pos, LERP_SPEED)
       pc.fov = THREE.MathUtils.lerp(pc.fov, rt.fov, LERP_SPEED)
       pc.updateProjectionMatrix()
 
-      // Slerp directly to saved quaternion — no lookAt, no gimbal lock
-      camera.quaternion.slerp(rt.quat, LERP_SPEED)
+      // Lerp the intermediate lookAt toward the final orbit target, then
+      // orient the camera via lookAt — smooth and gimbal-lock-free.
+      returnLookAt.current.lerp(rt.target, LERP_SPEED)
+      camera.lookAt(returnLookAt.current)
 
       // Check if close enough to snap and finish
       const dist = camera.position.distanceTo(rt.pos)
       if (dist < SNAP_THRESHOLD) {
         camera.position.copy(rt.pos)
-        camera.quaternion.copy(rt.quat)
+        camera.lookAt(rt.target)
         pc.fov = rt.fov
         pc.updateProjectionMatrix()
         if (orbitRef.current) {
@@ -178,6 +218,7 @@ function PovController({
           orbitRef.current.enabled = true
         }
         returnTarget.current = null
+        returnLookAt.current = null
         returningRef.current = false
       }
     }
@@ -273,7 +314,11 @@ function InitialCameraSetup({ orbitRef }: { orbitRef: React.RefObject<any> }) {
 // ---------------------------------------------------------------------------
 // WorldFollowCamera — delta-based camera follow in world mode
 // ---------------------------------------------------------------------------
-function WorldFollowCamera({ orbitRef, enabled }: { orbitRef: React.RefObject<any>; enabled: boolean }) {
+function WorldFollowCamera({ orbitRef, enabled, returningRef }: {
+  orbitRef: React.RefObject<any>
+  enabled: boolean
+  returningRef: React.MutableRefObject<boolean>
+}) {
   const prevPos = useRef<THREE.Vector3 | null>(null)
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
@@ -284,6 +329,8 @@ function WorldFollowCamera({ orbitRef, enabled }: { orbitRef: React.RefObject<an
       if (state.currentFrameIndex === prev.currentFrameIndex) return
       // Skip during POV mode
       if (state.activeCam !== null) return
+      // Skip during POV return animation (PovController still owns the camera)
+      if (returningRef.current) return
       // Only in world mode
       if (!state.worldMode) return
 
@@ -302,7 +349,7 @@ function WorldFollowCamera({ orbitRef, enabled }: { orbitRef: React.RefObject<an
       if (!prevPos.current) prevPos.current = new THREE.Vector3()
       prevPos.current.copy(_followCurrPos)
     })
-  }, [orbitRef])
+  }, [orbitRef, returningRef])
 
   // Reset tracking when leaving world mode or exiting POV
   useEffect(() => {
@@ -460,7 +507,7 @@ export default function LidarViewer() {
 
         {/* Chase-cam initial setup + world follow + reset */}
         <InitialCameraSetup orbitRef={orbitRef} />
-        <WorldFollowCamera orbitRef={orbitRef} enabled={followCam} />
+        <WorldFollowCamera orbitRef={orbitRef} enabled={followCam} returningRef={returningRef} />
         <ResetViewController orbitRef={orbitRef} resetRequestedRef={resetRequestedRef} />
 
         {/* Ground grid (XY plane, Z=0) — stays at world origin */}
