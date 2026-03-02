@@ -439,8 +439,8 @@ describe('useSceneStore', () => {
 
   describe('colormapMode', () => {
     it('setColormapMode changes mode', () => {
-      actions().setColormapMode('height')
-      expect(state().colormapMode).toBe('height')
+      actions().setColormapMode('range')
+      expect(state().colormapMode).toBe('range')
       actions().setColormapMode('intensity') // restore
     })
   })

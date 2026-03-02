@@ -82,7 +82,7 @@ function invertRowMajor4x4(m: number[]): number[] {
 
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type BoxMode = 'off' | 'box' | 'model'
-export type ColormapMode = 'intensity' | 'height' | 'range' | 'elongation'
+export type ColormapMode = 'intensity' | 'range' | 'elongation'
 export interface FrameData {
   timestamp: bigint
   /** Per-sensor point clouds (keyed by laser_name: 1=TOP,2=FRONT,3=SIDE_LEFT,4=SIDE_RIGHT,5=REAR) */
@@ -402,7 +402,7 @@ export const useSceneStore = create<SceneState>((set, get) => ({
   hoveredBoxId: null,
   highlightedCameraBoxIds: new Set<string>(),
   highlightedLaserBoxId: null,
-  worldMode: false,
+  worldMode: true,
   availableSegments: [],
   segmentMetas: new Map(),
   currentSegment: null,

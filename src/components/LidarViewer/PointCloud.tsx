@@ -5,7 +5,7 @@
  * Always merges from per-sensor clouds in useFrame (no pre-merged buffer
  * is cached, saving ~772 MB for a 199-frame segment — see OPT-004).
  *
- * Colormap modes: intensity (default), height (Z), range, elongation.
+ * Colormap modes: intensity (default), range, elongation.
  * When sensors are filtered, per-sensor coloring overrides colormap.
  */
 
@@ -30,16 +30,6 @@ const INTENSITY_STOPS: [number, number, number][] = [
   [0.95, 0.97, 1.00],  // 1.0 — near-white
 ]
 
-/** Turbo-like colormap for height (blue → cyan → green → yellow → red) */
-const HEIGHT_STOPS: [number, number, number][] = [
-  [0.19, 0.07, 0.23],  // 0.0 — deep purple
-  [0.12, 0.39, 0.72],  // 0.2 — blue
-  [0.06, 0.72, 0.60],  // 0.4 — teal
-  [0.47, 0.87, 0.26],  // 0.6 — green-yellow
-  [0.94, 0.73, 0.14],  // 0.8 — amber
-  [0.84, 0.18, 0.15],  // 1.0 — red
-]
-
 /** Warm ramp for range (dark → amber → bright yellow) */
 const RANGE_STOPS: [number, number, number][] = [
   [0.06, 0.04, 0.12],  // 0.0 — near-black
@@ -62,7 +52,6 @@ const ELONGATION_STOPS: [number, number, number][] = [
 
 const COLORMAP_STOPS: Record<ColormapMode, [number, number, number][]> = {
   intensity: INTENSITY_STOPS,
-  height: HEIGHT_STOPS,
   range: RANGE_STOPS,
   elongation: ELONGATION_STOPS,
 }
@@ -87,7 +76,6 @@ function colormapColor(stops: [number, number, number][], t: number): [number, n
 /** Offset within the POINT_STRIDE-sized record for each attribute */
 const ATTR_OFFSET: Record<ColormapMode, number> = {
   intensity: 3,   // positions[src + 3]
-  height: 2,      // positions[src + 2] = z
   range: 4,       // positions[src + 4]
   elongation: 5,  // positions[src + 5]
 }
@@ -95,7 +83,6 @@ const ATTR_OFFSET: Record<ColormapMode, number> = {
 /** Normalization ranges per attribute (min, max) for mapping to 0..1 */
 const ATTR_RANGE: Record<ColormapMode, [number, number]> = {
   intensity: [0, 1],        // already 0..1 in Waymo data
-  height: [-3, 8],          // z: typical ground=-2m, top of trucks ~5m
   range: [0, 75],           // meters (max useful range ~75m for visualization)
   elongation: [0, 1],       // already 0..1 in Waymo data
 }

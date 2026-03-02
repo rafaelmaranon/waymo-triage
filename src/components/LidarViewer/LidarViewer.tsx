@@ -16,6 +16,8 @@ import * as THREE from 'three'
 import PointCloud from './PointCloud'
 import BoundingBoxes, { TrajectoryTrails } from './BoundingBoxes'
 import CameraFrustums from './CameraFrustums'
+import { BevMinimapRenderer, BEV_ZOOM_LEVELS } from './BevMinimap'
+import BevOverlay from './BevOverlay'
 import { useSceneStore } from '../../stores/useSceneStore'
 import { parseCameraCalibrations, type CameraCalib } from '../../utils/cameraCalibration'
 import { BOX_TYPE_COLORS, BoxType } from '../../types/waymo'
@@ -266,6 +268,8 @@ export default function LidarViewer() {
   const orbitRef = useRef<any>(null)
   const sceneGroupRef = useRef<THREE.Group>(null)
   const returningRef = useRef(false)
+  const bevCanvasRef = useRef<HTMLCanvasElement>(null)
+  const [bevZoom, setBevZoom] = useState(0)
   const [panelOpen, setPanelOpen] = useState(true)
 
   // Parse calibrations once
@@ -348,7 +352,17 @@ export default function LidarViewer() {
             labelColor="white"
           />
         </GizmoHelper>
+
+        {/* BEV minimap: reads scene ref, renders into external canvas */}
+        <BevMinimapRenderer canvasRef={bevCanvasRef} zoomIndex={bevZoom} />
       </Canvas>
+
+      {/* BEV minimap overlay (circular canvas + radar decorations) */}
+      <BevOverlay
+        canvasRef={bevCanvasRef}
+        zoomIndex={bevZoom}
+        onToggleZoom={() => setBevZoom((z) => (z + 1) % BEV_ZOOM_LEVELS.length)}
+      />
 
       {/* Layer control overlay */}
       <div style={{
@@ -409,7 +423,7 @@ export default function LidarViewer() {
           overflow: 'hidden',
           backgroundColor: 'rgba(255,255,255,0.04)',
         }}>
-          {([false, true] as const).map((isWorld) => {
+          {([true, false] as const).map((isWorld) => {
             const active = worldMode === isWorld
             return (
               <button
@@ -539,7 +553,7 @@ export default function LidarViewer() {
           overflow: 'hidden',
           backgroundColor: 'rgba(255,255,255,0.04)',
         }}>
-          {([['intensity', 'Int'], ['height', 'Z'], ['range', 'Range'], ['elongation', 'Elong']] as [ColormapMode, string][]).map(([mode, label]) => {
+          {([['intensity', 'Int'], ['range', 'Range'], ['elongation', 'Elong']] as [ColormapMode, string][]).map(([mode, label]) => {
             const active = colormapMode === mode
             return (
               <button
