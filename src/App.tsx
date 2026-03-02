@@ -583,18 +583,17 @@ function DropZone({ onFilesLoaded }: { onFilesLoaded: (segments: Map<string, Map
           color: colors.textSecondary,
           lineHeight: 1.6,
         }}>
-          In-browser perception explorer for{' '}
+          Browser-native 3D perception explorer for{' '}
           <a
             href="https://waymo.com/open/"
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: colors.accent, textDecoration: 'none' }}
           >
-            Waymo Open Dataset
-          </a>{' '}
-          v2.0.1.
+            Waymo Open Dataset v2.0 Perception
+          </a>.
           <br />
-          No setup, no server — just drop Parquet files and explore.
+          No install. No server. Your data never leaves your browser.
         </div>
       </div>
 
