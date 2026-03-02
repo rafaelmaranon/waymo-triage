@@ -4,7 +4,7 @@
 
 <p align="center">
   Browser-native 3D perception explorer for Waymo Open Dataset v2.0 Perception<br/>
-  No install. No server. Just drag, drop, and explore.
+  No install. No server. Your data never leaves your browser.
 </p>
 
 <p align="center">
