@@ -11,18 +11,18 @@
   <img src="assets/screenshot.png" alt="Perception Studio Screenshot" width="720" />
 </p>
 
-## Highlights
+## About
 
 - **See what the car sees** — explore real self-driving scenes in 3D with LiDAR point clouds and 5 synchronized camera views
 - **3D object models** — vehicles, pedestrians, and cyclists rendered as 3D models with color-coded tracking
 - **Camera POV mode** — click a camera to jump into its viewpoint in 3D, compare what the sensor sees side by side
 - **Cross-modal linking** — hover over a camera detection and its 3D counterpart lights up, and vice versa
 
+## Try It With Your Waymo Data
+
 **Already have Waymo Open Dataset v2.0 Perception downloaded?** Just open the [live demo](https://heejaekim.github.io/waymo-perception-studio), drop your files, and go.
 
-## Get Started
-
-You need [Waymo Open Dataset v2.0 Perception](https://waymo.com/open/) Parquet files (free with a Google account).
+**Don't have the data yet?** It's free with a Google account.
 
 <details>
 <summary><strong>Download script</strong></summary>
