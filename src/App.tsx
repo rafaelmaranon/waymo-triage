@@ -15,6 +15,7 @@ import { getEmbedParams, type EmbedParams } from './utils/embedParams'
 import { initEmbedApi } from './utils/embedApi'
 import MemoryOverlay from './components/MemoryOverlay'
 import SearchableSelect, { type SelectItem } from './components/SearchableSelect'
+import { ScenarioPanel } from './components/ScenarioPanel/ScenarioPanel'
 
 
 // ---------------------------------------------------------------------------
@@ -359,12 +360,16 @@ function App() {
       {!isEmbed && <Header />}
 
       {/* Main Content */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-        {showDropZone && !isEmbed ? (
-          <DropZone onFilesLoaded={loadFromFiles} />
-        ) : (
-          <SensorView embedControls={isEmbed ? embedParams.controls : 'full'} />
-        )}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', position: 'relative' }}>
+        {/* Scenario sidebar — hidden in embed mode only */}
+        {!isEmbed && <ScenarioPanel />}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {showDropZone && !isEmbed ? (
+            <DropZone onFilesLoaded={loadFromFiles} />
+          ) : (
+            <SensorView embedControls={isEmbed ? embedParams.controls : 'full'} />
+          )}
+        </div>
       </main>
 
       {/* Timeline — hidden in embed controls=none */}
