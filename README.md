@@ -18,9 +18,6 @@ Built for AV teams that need to prioritize which driving scenarios to annotate f
 ### Dashboard & Batch Send
 ![Dashboard with safety cards and batch select](docs/images/AV-Triage3.jpg)
 
-### nuScenes Scenarios — Boston
-![nuScenes scenarios from Boston](docs/images/AV-Triage2.jpg)
-
 ### AV2 3D LiDAR Viewer — Pittsburgh
 ![AV2 cyclist interaction with LiDAR and 7 cameras](docs/images/AV-Triage6.jpg)
 
