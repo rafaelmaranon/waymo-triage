@@ -4,7 +4,7 @@
 
 Built for AV teams that need to prioritize which driving scenarios to annotate first.
 
-![AV Triage Dashboard](docs/dashboard.png)
+![AV Triage Dashboard](docs/images/AV-Triage3.jpg)
 
 ## What It Does
 
@@ -12,6 +12,26 @@ Built for AV teams that need to prioritize which driving scenarios to annotate f
 - **Preview in 3D** — Click any scenario to load the full LiDAR point cloud with 5 camera views, 3D bounding boxes, trajectory trails, and playback controls
 - **Send to Encord** — Batch select scenarios and send to Encord with one click. Waymo scenes arrive with 150–185 pre-drawn 3D cuboid predictions ready for labeler review
 - **Track progress** — Live workflow status synced from Encord (Queued → Annotating → Review → Complete)
+
+## Screenshots
+
+### Dashboard & Batch Send
+![Dashboard with safety cards and batch select](docs/images/AV-Triage3.jpg)
+
+### nuScenes Scenarios — Boston
+![nuScenes scenarios from Boston](docs/images/AV-Triage2.jpg)
+
+### AV2 3D LiDAR Viewer — Pittsburgh
+![AV2 cyclist interaction with LiDAR and 7 cameras](docs/images/AV-Triage6.jpg)
+
+### Waymo V2 3D Viewer — San Francisco
+![Waymo V2 160 pedestrians at dusk with 5 cameras](docs/images/AV-Triage5.jpg)
+
+### Encord 3D Label Editor — Cuboid Predictions
+![93 pre-drawn 3D cuboid predictions in Encord](docs/images/AV-Triage1.jpg)
+
+### Encord Project Queue
+![Encord Lidar project queue with labeling tasks](docs/images/AV-Triage4.jpg)
 
 ## Supported Datasets
 
