@@ -4,7 +4,7 @@
 
 Built for AV teams that need to prioritize which driving scenarios to annotate first.
 
-![AV Triage Dashboard](docs/images/AV-Triage3.jpg)
+![AV Triage Dashboard](docs/images/AV-Triage5.jpg)
 
 ## What It Does
 
@@ -14,9 +14,6 @@ Built for AV teams that need to prioritize which driving scenarios to annotate f
 - **Track progress** — Live workflow status synced from Encord (Queued → Annotating → Review → Complete)
 
 ## Screenshots
-
-### Dashboard & Batch Send
-![Dashboard with safety cards and batch select](docs/images/AV-Triage3.jpg)
 
 ### AV2 3D LiDAR Viewer — Pittsburgh
 ![AV2 cyclist interaction with LiDAR and 7 cameras](docs/images/AV-Triage6.jpg)
