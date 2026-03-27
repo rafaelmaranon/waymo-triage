@@ -4,7 +4,7 @@
 
 Built for AV teams that need to prioritize which driving scenarios to annotate first.
 
-![AV Triage Dashboard](docs/images/AV-Triage5.jpg)
+![AV Triage Dashboard](docs/images/AV-Triage1.jpg)
 
 ## What It Does
 
@@ -15,17 +15,17 @@ Built for AV teams that need to prioritize which driving scenarios to annotate f
 
 ## Screenshots
 
-### AV2 3D LiDAR Viewer — Pittsburgh
-![AV2 cyclist interaction with LiDAR and 7 cameras](docs/images/AV-Triage6.jpg)
-
-### Waymo V2 3D Viewer — San Francisco
-![Waymo V2 160 pedestrians at dusk with 5 cameras](docs/images/AV-Triage5.jpg)
-
 ### Encord 3D Label Editor — Cuboid Predictions
 ![93 pre-drawn 3D cuboid predictions in Encord](docs/images/AV-Triage1.jpg)
 
 ### Encord Project Queue
 ![Encord Lidar project queue with labeling tasks](docs/images/AV-Triage4.jpg)
+
+### Waymo V2 3D Viewer — San Francisco
+![Waymo V2 160 pedestrians at dusk with 5 cameras](docs/images/AV-Triage5.jpg)
+
+### AV2 3D LiDAR Viewer — Pittsburgh
+![AV2 cyclist interaction with LiDAR and 7 cameras](docs/images/AV-Triage6.jpg)
 
 ## Supported Datasets
 
