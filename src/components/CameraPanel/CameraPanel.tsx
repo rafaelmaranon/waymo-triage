@@ -22,10 +22,59 @@ import BoxProjectionOverlay from './BoxProjectionOverlay'
 import KeypointOverlay from './KeypointOverlay'
 import CameraSegOverlay from './CameraSegOverlay'
 import { trackKeyboardShortcut } from '../../utils/analytics'
+import { getPreloadedUrl } from '../../utils/cameraPreload'
 
 /** Height of the camera strip in pixels */
 const STRIP_HEIGHT = 160
 const STRIP_HEIGHT_MOBILE = 100
+/** Height of the thumbnail row in the new triage layout */
+const THUMBNAIL_STRIP_HEIGHT = 100
+
+// ---------------------------------------------------------------------------
+// Shared hook: blob URL with preload-before-swap
+// ---------------------------------------------------------------------------
+
+function useBlobUrl(imageBuffer: ArrayBuffer | null): string | null {
+  const [displayUrl, setDisplayUrl] = useState<string | null>(null)
+  const pendingUrlRef = useRef<string | null>(null)
+  const activeUrlRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!imageBuffer) return
+
+    // Fast path: pre-decoded URL is already available from the preload cache
+    const preloaded = getPreloadedUrl(imageBuffer)
+    if (preloaded) {
+      if (activeUrlRef.current && activeUrlRef.current !== preloaded) {
+        URL.revokeObjectURL(activeUrlRef.current)
+      }
+      activeUrlRef.current = preloaded
+      pendingUrlRef.current = null
+      setDisplayUrl(preloaded)
+      return
+    }
+
+    // Slow path: decode now (first time we've seen this buffer)
+    const blob = new Blob([imageBuffer], { type: 'image/jpeg' })
+    const newUrl = URL.createObjectURL(blob)
+    pendingUrlRef.current = newUrl
+    const img = new Image()
+    img.onload = () => {
+      if (pendingUrlRef.current !== newUrl) { URL.revokeObjectURL(newUrl); return }
+      if (activeUrlRef.current) URL.revokeObjectURL(activeUrlRef.current)
+      activeUrlRef.current = newUrl
+      setDisplayUrl(newUrl)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(newUrl)
+      if (pendingUrlRef.current === newUrl) pendingUrlRef.current = null
+    }
+    img.src = newUrl
+    return () => { if (pendingUrlRef.current === newUrl) pendingUrlRef.current = null }
+  }, [imageBuffer])
+
+  return displayUrl
+}
 
 function useIsMobile(breakpoint = 600) {
   const [m, setM] = useState(() => window.innerWidth < breakpoint)
@@ -119,7 +168,7 @@ export default function CameraPanel() {
         flexDirection: 'column',
         gap: '3px',
         padding: '3px 4px',
-        backgroundColor: colors.bgDeep,
+        backgroundColor: '#0A0A0A',
         borderTop: `1px solid ${colors.borderSubtle}`,
         overflow: 'hidden',
       }}>
@@ -153,7 +202,7 @@ export default function CameraPanel() {
       display: 'flex',
       gap: '6px',
       padding: '6px 8px',
-      backgroundColor: colors.bgDeep,
+      backgroundColor: '#0A0A0A',
       borderTop: `1px solid ${colors.borderSubtle}`,
       overflow: 'hidden',
     }}>
@@ -201,47 +250,8 @@ function CameraView({ cameraName, label, imageBuffer, boxes, boxMode, showLidarO
   const hasKeypoints = useSceneStore((s) => s.hasKeypoints)
   const showCameraSeg = useSceneStore((s) => s.showCameraSeg)
   const hasCameraSeg = useSceneStore((s) => s.hasCameraSegmentation)
-  /** The URL currently displayed (kept until a new image fully loads) */
-  const [displayUrl, setDisplayUrl] = useState<string | null>(null)
-  /** The newest blob URL being loaded (may not be visible yet) */
-  const pendingUrlRef = useRef<string | null>(null)
-  /** The blob URL currently shown on screen (for cleanup) */
-  const activeUrlRef = useRef<string | null>(null)
+  const displayUrl = useBlobUrl(imageBuffer)
   const [hovered, setHovered] = useState(false)
-
-  useEffect(() => {
-    if (!imageBuffer) return // keep showing the last good image
-
-    // Create blob URL for the new frame
-    const blob = new Blob([imageBuffer], { type: 'image/jpeg' })
-    const newUrl = URL.createObjectURL(blob)
-    pendingUrlRef.current = newUrl
-
-    // Preload: only swap when the browser has the image decoded
-    const img = new Image()
-    img.onload = () => {
-      // Only apply if this is still the most recent request
-      if (pendingUrlRef.current !== newUrl) {
-        URL.revokeObjectURL(newUrl)
-        return
-      }
-      // Revoke the previously displayed URL
-      if (activeUrlRef.current) URL.revokeObjectURL(activeUrlRef.current)
-      activeUrlRef.current = newUrl
-      setDisplayUrl(newUrl)
-    }
-    img.onerror = () => {
-      // Corrupted frame — discard, keep previous image
-      URL.revokeObjectURL(newUrl)
-      if (pendingUrlRef.current === newUrl) pendingUrlRef.current = null
-    }
-    img.src = newUrl
-
-    return () => {
-      // If a newer effect fires before this image loaded, clean up
-      if (pendingUrlRef.current === newUrl) pendingUrlRef.current = null
-    }
-  }, [imageBuffer])
 
   // Derive flex and color from manifest
   const manifest = getManifest()
@@ -326,8 +336,8 @@ function CameraView({ cameraName, label, imageBuffer, boxes, boxMode, showLidarO
         fontSize: '9px',
         fontFamily: fonts.sans,
         fontWeight: 500,
-        color: 'rgba(255, 255, 255, 0.75)',
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        color: colors.accent,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
         padding: '2px 5px',
         borderRadius: radius.sm,
         pointerEvents: 'none',
@@ -356,6 +366,237 @@ function CameraView({ cameraName, label, imageBuffer, boxes, boxMode, showLidarO
           boxShadow: `0 0 8px ${accentColor}`,
         }} />
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CameraLargeView — fills its parent container, all overlays, POV button
+// ---------------------------------------------------------------------------
+
+export function CameraLargeView({ cameraId }: { cameraId: number }) {
+  const cameraImages    = useSceneStore((s) => s.currentFrame?.cameraImages)
+  const cameraBoxes     = useSceneStore((s) => s.currentFrame?.cameraBoxes)
+  const boxMode         = useSceneStore((s) => s.boxMode)
+  const showLidarOverlay = useSceneStore((s) => s.showLidarOverlay)
+  const showKeypoints2D = useSceneStore((s) => s.showKeypoints2D)
+  const hasKeypoints    = useSceneStore((s) => s.hasKeypoints)
+  const showCameraSeg   = useSceneStore((s) => s.showCameraSeg)
+  const hasCameraSeg    = useSceneStore((s) => s.hasCameraSegmentation)
+  const activeCam       = useSceneStore((s) => s.activeCam)
+  const toggleActiveCam = useSceneStore((s) => s.actions.toggleActiveCam)
+  const setHoveredCam   = useSceneStore((s) => s.actions.setHoveredCam)
+
+  const manifest   = getManifest()
+  const camDef     = manifest.cameraSensors.find((c) => c.id === cameraId)
+  const label      = camDef?.label ?? `CAM ${cameraId}`
+  const accentColor = manifest.cameraColors[cameraId] ?? colors.accent
+
+  const displayUrl = useBlobUrl(cameraImages?.get(cameraId) ?? null)
+  const isActivePov = activeCam === cameraId
+
+  const boxes = useMemo(() => {
+    if (boxMode === 'off' || !cameraBoxes) return EMPTY_BOXES
+    return (cameraBoxes as ParquetRow[]).filter((r) => (r['key.camera_name'] as number) === cameraId)
+  }, [cameraBoxes, boxMode, cameraId])
+
+  return (
+    <div
+      style={{ position: 'absolute', inset: 0, backgroundColor: colors.bgDeep, overflow: 'hidden' }}
+      onMouseEnter={() => setHoveredCam(cameraId)}
+      onMouseLeave={() => setHoveredCam(null)}
+    >
+      {displayUrl ? (
+        <img
+          src={displayUrl}
+          alt={label}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.25 }}>
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+        </div>
+      )}
+
+      {/* Overlays */}
+      {showCameraSeg && hasCameraSeg && <CameraSegOverlay cameraName={cameraId} />}
+      {showLidarOverlay && <LidarProjectionOverlay cameraName={cameraId} />}
+      {boxMode !== 'off' && boxes.length === 0 && <BoxProjectionOverlay cameraName={cameraId} />}
+      {boxes.length > 0 && <BBoxOverlayCanvas cameraName={cameraId} boxes={boxes} />}
+      {showKeypoints2D && hasKeypoints && <KeypointOverlay cameraName={cameraId} />}
+
+      {/* Camera label — bottom left */}
+      <div style={{
+        position: 'absolute', bottom: 10, left: 10,
+        fontSize: 10, fontWeight: 700, fontFamily: fonts.sans,
+        color: colors.accent,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        padding: '3px 10px',
+        borderRadius: radius.sm,
+        letterSpacing: '1.5px',
+        textTransform: 'uppercase',
+        pointerEvents: 'none',
+        backdropFilter: 'blur(4px)',
+        border: `1px solid ${colors.accentDim}`,
+      }}>
+        {label}
+      </div>
+
+      {/* POV toggle — top right */}
+      <button
+        onClick={() => toggleActiveCam(cameraId)}
+        style={{
+          position: 'absolute', top: 10, right: 10,
+          display: 'flex', alignItems: 'center', gap: 5,
+          padding: '5px 11px',
+          fontSize: 9, fontFamily: fonts.sans, fontWeight: 700,
+          letterSpacing: '0.07em', textTransform: 'uppercase',
+          color: isActivePov ? colors.bgDeep : accentColor,
+          backgroundColor: isActivePov ? accentColor : 'rgba(0,0,0,0.65)',
+          border: `1px solid ${isActivePov ? accentColor : `${accentColor}55`}`,
+          borderRadius: radius.pill,
+          cursor: 'pointer',
+          backdropFilter: 'blur(8px)',
+          transition: 'color 0.15s, background-color 0.15s, border-color 0.15s',
+        }}
+      >
+        {isActivePov && (
+          <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: colors.bgDeep, display: 'inline-block', flexShrink: 0 }} />
+        )}
+        {isActivePov ? 'POV ON' : 'POV'}
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ThumbnailCam — single clickable camera in the thumbnail strip
+// ---------------------------------------------------------------------------
+
+function ThumbnailCam({ cameraId, onSelect }: { cameraId: number; onSelect: () => void }) {
+  const cameraImages  = useSceneStore((s) => s.currentFrame?.cameraImages)
+  const activeCam     = useSceneStore((s) => s.activeCam)
+  const setHoveredCam = useSceneStore((s) => s.actions.setHoveredCam)
+
+  const manifest    = getManifest()
+  const camDef      = manifest.cameraSensors.find((c) => c.id === cameraId)
+  const label       = camDef?.label ?? `CAM ${cameraId}`
+  const accentColor = manifest.cameraColors[cameraId] ?? colors.accent
+  const isActivePov = activeCam === cameraId
+
+  const displayUrl = useBlobUrl(cameraImages?.get(cameraId) ?? null)
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      onClick={onSelect}
+      onMouseEnter={() => { setHovered(true); setHoveredCam(cameraId) }}
+      onMouseLeave={() => { setHovered(false); setHoveredCam(null) }}
+      style={{
+        flex: 1,
+        position: 'relative',
+        backgroundColor: colors.bgBase,
+        borderRadius: radius.sm,
+        overflow: 'hidden',
+        cursor: 'pointer',
+        border: isActivePov
+          ? `2px solid ${accentColor}`
+          : hovered
+            ? '2px solid rgba(255,255,255,0.35)'
+            : `2px solid ${colors.borderSubtle}`,
+        boxShadow: isActivePov ? `0 0 8px ${accentColor}55` : 'none',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+      }}
+    >
+      {displayUrl ? (
+        <img src={displayUrl} alt={label} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      ) : (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.textDim }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+        </div>
+      )}
+
+      {/* Hover overlay: expand-to-large affordance */}
+      {hovered && (
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.42)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" style={{ opacity: 0.9 }}>
+            <polyline points="15 3 21 3 21 9" />
+            <polyline points="9 21 3 21 3 15" />
+            <line x1="21" y1="3" x2="14" y2="10" />
+            <line x1="3" y1="21" x2="10" y2="14" />
+          </svg>
+        </div>
+      )}
+
+      {/* Label */}
+      <div style={{
+        position: 'absolute', bottom: 3, left: 3,
+        fontSize: 8, fontWeight: 600, fontFamily: fonts.sans,
+        color: colors.accent,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        padding: '1px 5px',
+        borderRadius: 2,
+        letterSpacing: '0.05em',
+        textTransform: 'uppercase',
+        pointerEvents: 'none',
+        lineHeight: 1.7,
+      }}>
+        {label}
+      </div>
+
+      {/* POV active dot */}
+      {isActivePov && (
+        <div style={{
+          position: 'absolute', top: 4, right: 4,
+          width: 6, height: 6, borderRadius: '50%',
+          backgroundColor: accentColor,
+          boxShadow: `0 0 6px ${accentColor}`,
+        }} />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CameraThumbnailStrip — horizontal strip of all cameras except primaryCamId
+// ---------------------------------------------------------------------------
+
+export function CameraThumbnailStrip({
+  primaryCamId,
+  onSelectCamera,
+}: {
+  primaryCamId: number
+  onSelectCamera: (id: number) => void
+}) {
+  const cameras = getManifest().cameraSensors
+  const thumbnailCams = cameras.filter((c) => c.id !== primaryCamId)
+
+  if (thumbnailCams.length === 0) return null
+
+  return (
+    <div style={{
+      height: THUMBNAIL_STRIP_HEIGHT + 8,
+      flexShrink: 0,
+      display: 'flex',
+      gap: 4,
+      padding: '4px 6px',
+      backgroundColor: '#0A0A0A',
+      borderTop: `1px solid ${colors.borderSubtle}`,
+      overflow: 'hidden',
+    }}>
+      {thumbnailCams.map(({ id }) => (
+        <ThumbnailCam
+          key={id}
+          cameraId={id}
+          onSelect={() => onSelectCamera(id)}
+        />
+      ))}
     </div>
   )
 }

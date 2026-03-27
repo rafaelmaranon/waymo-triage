@@ -22,3 +22,24 @@ traces/
 commits.txt
 upng-spike*.mjs
 egjs-view360-stargazers.xlsx
+
+# Credentials & keys
+*.ed25519
+*.pem
+*.key
+.env*
+.encord/
+
+# Python
+__pycache__/
+*.pyc
+
+# API artifacts
+best_frames.csv
+old-server.py
+/server.py
+api/__pycache__/
+
+# Data artifacts
+data/best_frames.csv
+data/argoverse2_scored_scenarios.json

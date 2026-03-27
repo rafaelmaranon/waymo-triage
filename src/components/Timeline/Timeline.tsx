@@ -3,9 +3,6 @@
  *
  * Shows a YouTube-style buffer bar indicating which frames are loaded,
  * a gradient progress bar for the current position, and a draggable scrubber.
- *
- * Extracted from App.tsx for maintainability — this component will grow
- * with annotation frame markers (segmentation, keypoints).
  */
 
 import { useCallback, useMemo } from 'react'
@@ -52,6 +49,7 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
   const currentFrameIndex = useSceneStore((s) => s.currentFrameIndex)
   const totalFrames = useSceneStore((s) => s.totalFrames)
   const isPlaying = useSceneStore((s) => s.isPlaying)
+  const playbackSpeed = useSceneStore((s) => s.playbackSpeed)
   const cachedFrames = useSceneStore((s) => s.cachedFrames)
   const cameraCachedFrames = useSceneStore((s) => s.cameraCachedFrames)
   const actions = useSceneStore((s) => s.actions)
@@ -138,11 +136,40 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
         )}
       </button>
 
+      {/* Speed control buttons */}
+      {!minimal && (
+        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+          {([0.5, 1, 2] as const).map((spd) => (
+            <button
+              key={spd}
+              onClick={() => actions.setPlaybackSpeed(spd)}
+              disabled={disabled}
+              style={{
+                padding: '2px 6px',
+                fontSize: '10px',
+                fontFamily: fonts.mono,
+                fontWeight: playbackSpeed === spd ? 700 : 400,
+                color: playbackSpeed === spd ? '#FFFFFF' : colors.textSecondary,
+                backgroundColor: playbackSpeed === spd ? colors.accent : 'transparent',
+                border: `1px solid ${playbackSpeed === spd ? colors.accent : colors.border}`,
+                borderRadius: radius.sm,
+                cursor: disabled ? 'default' : 'pointer',
+                lineHeight: '16px',
+                transition: 'color 0.15s, background-color 0.15s, border-color 0.15s',
+                opacity: disabled ? 0.4 : 1,
+              }}
+            >
+              {spd}×
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Custom slider with buffer bar + annotation lanes */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
-        {/* Main track area — outer container keeps full width for hit area */}
+        {/* Main track area */}
         <div style={{ position: 'relative', height: '24px', display: 'flex', alignItems: 'center' }}>
-          {/* Inset track container — padded by dot radius so playhead fits at 0% and 100% */}
+          {/* Inset track container */}
           <div style={{ position: 'absolute', left: 6, right: 6, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
             {/* Track background */}
             <div style={{
@@ -175,7 +202,7 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
               )
             })}
 
-            {/* Played progress (gradient bar) */}
+            {/* Played progress */}
             <div style={{
               position: 'absolute',
               left: 0,
@@ -184,10 +211,9 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
               background: gradients.accent,
               borderRadius: radius.pill,
               pointerEvents: 'none',
-              boxShadow: `0 0 8px ${colors.accentGlow}`,
             }} />
 
-            {/* Playhead dot — at 0% center is at left edge, at 100% center is at right edge */}
+            {/* Playhead dot */}
             {maxFrame > 0 && (
               <div style={{
                 position: 'absolute',
@@ -198,13 +224,13 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
                 borderRadius: '50%',
                 backgroundColor: colors.accent,
                 transform: 'translate(-50%, -50%)',
-                boxShadow: `0 0 6px ${colors.accentDim}`,
+                boxShadow: `0 0 4px ${colors.accentDim}`,
                 pointerEvents: 'none',
               }} />
             )}
           </div>
 
-          {/* Invisible range input — matches inset track area */}
+          {/* Invisible range input */}
           <input
             type="range"
             min={0}
@@ -227,7 +253,7 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
           />
         </div>
 
-        {/* Camera buffer lane — shown while camera loading lags behind LiDAR */}
+        {/* Camera buffer lane */}
         {!minimal && showCameraBuffer && (
           <div style={{ position: 'relative', height: '3px', marginTop: '2px', marginLeft: 6, marginRight: 6 }}>
             {cameraBufferSegments.map((seg, i) => {
@@ -241,8 +267,8 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
                     left: `${left}%`,
                     width: `${Math.min(width, 100 - left)}%`,
                     height: '3px',
-                    backgroundColor: '#FF9E00',
-                    opacity: 0.6,
+                    backgroundColor: colors.accent,
+                    opacity: 0.4,
                     borderRadius: '1px',
                     pointerEvents: 'none',
                   }}
@@ -252,7 +278,7 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
           </div>
         )}
 
-        {/* Annotation lanes — each active feature gets its own thin lane (hidden in minimal mode) */}
+        {/* Annotation lanes */}
         {!minimal && activeLanes.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', paddingTop: '2px', marginLeft: 6, marginRight: 6 }}>
             {activeLanes.map(({ key, color, frames }) => (

@@ -79,6 +79,13 @@ export default defineConfig(({ command }) => ({
     },
   },
   server: {
+    proxy: {
+      // Proxy Encord API calls to the local Python FastAPI server
+      '/api/encord': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+      },
+    },
     watch: {
       // Exclude large dataset directories from file watching to avoid ENOSPC
       ignored: [

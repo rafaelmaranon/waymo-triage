@@ -34,6 +34,7 @@ import { WorkerPool } from '../workers/workerPool'
 import type { SegmentMeta } from '../types/waymo'
 import type { MetadataBundle } from '../types/dataset'
 import { memLog } from '../utils/memoryLogger'
+import { preloadCameraImages } from '../utils/cameraPreload'
 import { getManifest, setManifest } from '../adapters/registry'
 import { waymoManifest } from '../adapters/waymo/manifest'
 import { loadWaymoMetadata } from '../adapters/waymo/metadata'
@@ -532,7 +533,7 @@ export const useSceneStore = create<SceneState>((set, get) => ({
   totalFrames: 0,
   currentFrameIndex: 0,
   isPlaying: false,
-  playbackSpeed: 1,
+  playbackSpeed: 0.5,
   currentFrame: null,
   lidarCalibrations: new Map(),
   cameraCalibrations: [],
@@ -690,6 +691,11 @@ export const useSceneStore = create<SceneState>((set, get) => ({
           return
         }
         await get().actions.loadFrame(next)
+        // Preload blob URLs for upcoming camera frames so they're decoded before needed
+        for (let ahead = 0; ahead <= 5; ahead++) {
+          const camData = internal.cameraImageCache.get(next + ahead)
+          if (camData && camData.size > 0) preloadCameraImages([...camData.values()])
+        }
       }, intervalMs)
 
       // Secondary interval: refresh current frame's camera images when they arrive late.
@@ -1490,15 +1496,20 @@ async function initDataWorker(
   get: () => SceneState,
   _set: (partial: Partial<SceneState>) => void,
 ) {
-  const lidarSource = sources.get('lidar')
+  // Only init if lidar was successfully opened (skip if 404'd)
+  const lidarSource = internal.parquetFiles.has('lidar')
+    ? sources.get('lidar')
+    : undefined
   if (!lidarSource) return
 
   const pool = new WorkerPool<Record<string, unknown>, LidarBatchResult>(
     WORKER_CONCURRENCY,
     () => new Worker(new URL('../workers/waymoLidarWorker.ts', import.meta.url), { type: 'module' }),
   )
-  // Pass segmentation parquet URL if available (Phase A worker protocol)
-  const segSource = sources.get('lidar_segmentation')
+  // Pass segmentation parquet URL only if it was successfully opened (skip 404s)
+  const segSource = internal.parquetFiles.has('lidar_segmentation')
+    ? sources.get('lidar_segmentation')
+    : undefined
   const { numBatches } = await pool.init({
     lidarUrl: lidarSource,
     calibrationEntries: [...get().lidarCalibrations.entries()],
@@ -1513,7 +1524,10 @@ async function initDataWorker(
 async function initCameraWorker(
   sources: Map<string, File | string>,
 ) {
-  const cameraSource = sources.get('camera_image')
+  // Only init if camera_image was successfully opened (skip if 404'd)
+  const cameraSource = internal.parquetFiles.has('camera_image')
+    ? sources.get('camera_image')
+    : undefined
   if (!cameraSource) return
 
   const pool = new WorkerPool<Record<string, unknown>, CameraBatchResult>(

@@ -1,21 +1,21 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useSceneStore, getThumbnailResolver } from './stores/useSceneStore'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSceneStore } from './stores/useSceneStore'
 import LidarViewer from './components/LidarViewer/LidarViewer'
-import CameraPanel from './components/CameraPanel/CameraPanel'
+import { CameraLargeView, CameraThumbnailStrip } from './components/CameraPanel/CameraPanel'
 import Timeline from './components/Timeline/Timeline'
 import { colors, fonts, radius, gradients } from './theme'
-import { LOCATION_LABELS } from './types/waymo'
 import { getManifest } from './adapters/registry'
-import { scanDataTransfer, pickAndScanFolder, hasDirectoryPicker } from './utils/folderScan'
+import { scanDataTransfer } from './utils/folderScan'
 import { normalizeBaseUrl } from './utils/urlValidation'
-import { buildShareUrl, parseViewParams, hasUrlSource, getUrlSource, getInitialSearch, clearUrlSource, type ShareableState } from './utils/urlState'
-import { getCameraPose, setPendingCameraPose } from './components/LidarViewer/LidarViewer'
-import { trackDatasetLoad, trackShareView, trackPresetClick, trackStarModalOpen, trackStarClick, trackStarDismiss, trackKeyboardShortcut } from './utils/analytics'
+import { parseViewParams, getInitialSearch, clearUrlSource } from './utils/urlState'
+import { setPendingCameraPose } from './components/LidarViewer/LidarViewer'
+import { trackDatasetLoad, trackKeyboardShortcut } from './utils/analytics'
 import { getEmbedParams, type EmbedParams } from './utils/embedParams'
 import { initEmbedApi } from './utils/embedApi'
 import MemoryOverlay from './components/MemoryOverlay'
-import SearchableSelect, { type SelectItem } from './components/SearchableSelect'
 import { ScenarioPanel } from './components/ScenarioPanel/ScenarioPanel'
+import { useFilterStore } from './stores/useFilterStore'
+import scenarioIndex from './data/scenario_index.json'
 
 
 // ---------------------------------------------------------------------------
@@ -198,6 +198,21 @@ function App() {
   useUrlViewRestore()
   useEmbedInitialState(embedParams)
 
+  // Sync document title with active dataset + segment
+  const _status = useSceneStore((s) => s.status)
+  const _currentSegment = useSceneStore((s) => s.currentSegment)
+  useEffect(() => {
+    if (_status === 'ready' && _currentSegment) {
+      const datasetName = getManifest().name
+      const shortSeg = _currentSegment.length > 20
+        ? `${_currentSegment.slice(0, 8)}…${_currentSegment.slice(-8)}`
+        : _currentSegment
+      document.title = `${shortSeg} — ${datasetName} · AV Triage`
+    } else {
+      document.title = 'AV Triage'
+    }
+  }, [_status, _currentSegment])
+
   // Initialize embed postMessage API when in embed mode
   useEffect(() => {
     if (!embedParams.embed) return
@@ -356,14 +371,11 @@ function App() {
       {/* Memory debug overlay (enable: localStorage.setItem('waymo-memory-log','true') or press M) */}
       {!isEmbed && <MemoryOverlay />}
 
-      {/* Header — hidden in embed mode */}
-      {!isEmbed && <Header />}
-
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', position: 'relative' }}>
         {/* Scenario sidebar — hidden in embed mode only */}
         {!isEmbed && <ScenarioPanel />}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: isEmbed ? 'none' : `1px solid ${colors.border}`, position: 'relative' }}>
           {showDropZone && !isEmbed ? (
             <DropZone onFilesLoaded={loadFromFiles} />
           ) : (
@@ -376,7 +388,7 @@ function App() {
       {showTimeline && (
         <footer style={{
           padding: isEmbed && embedParams.controls === 'minimal' ? '6px 12px' : '10px 20px',
-          background: colors.bgSurface,
+          background: '#FFFFFF',
           borderTop: `1px solid ${colors.border}`,
           flexShrink: 0,
         }}>
@@ -395,26 +407,54 @@ function App() {
           fontSize: '10px',
           fontFamily: fonts.sans,
           color: colors.textDim,
-          background: colors.bgDeep,
-          borderTop: `1px solid ${colors.borderSubtle}`,
+          background: '#F1F3F5',
+          borderTop: `1px solid ${colors.border}`,
           flexShrink: 0,
         }}>
+          <span>AV Triage</span>
+          <span style={{ opacity: 0.4 }}>·</span>
           <span>
-            Built by{' '}
-            <a href="https://happyhj.github.io/" target="_blank" rel="noopener noreferrer"
+            Powered by{' '}
+            <a
+              href="https://github.com/rafaelmaranon"
+              target="_blank"
+              rel="noopener noreferrer"
               style={{ color: colors.textSecondary, textDecoration: 'none', transition: 'color 0.15s' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = colors.textPrimary }}
               onMouseLeave={(e) => { e.currentTarget.style.color = colors.textSecondary }}
-            >Heejae Kim</a>
+            >ProdLab</a>
+            {', '}
+            <a
+              href="https://github.com/egolens/egolens"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: colors.textSecondary, textDecoration: 'none', transition: 'color 0.15s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textPrimary }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textSecondary }}
+            >EgoLens</a>
+            {' and '}
+            <a
+              href="https://encord.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: colors.textSecondary, textDecoration: 'none', transition: 'color 0.15s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textPrimary }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textSecondary }}
+            >Encord</a>
           </span>
           <span style={{ opacity: 0.4 }}>·</span>
-          <a href="https://www.linkedin.com/in/heejaekm/" target="_blank" rel="noopener noreferrer"
-            style={{ color: colors.textDim, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3, transition: 'color 0.15s' }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textSecondary }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim }}
+          <a
+            href="https://github.com/rafaelmaranon/waymo-triage"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: colors.textSecondary, textDecoration: 'none', transition: 'color 0.15s', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textPrimary }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textSecondary }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-            LinkedIn
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            GitHub
           </a>
         </div>
       )}
@@ -422,371 +462,6 @@ function App() {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Header
-// ---------------------------------------------------------------------------
-
-function Header() {
-  const status = useSceneStore((s) => s.status)
-  const isMobile = useIsMobile()
-
-  const availableSegments = useSceneStore((s) => s.availableSegments)
-  const currentSegment = useSceneStore((s) => s.currentSegment)
-  const segmentMetas = useSceneStore((s) => s.segmentMetas)
-  const actions = useSceneStore((s) => s.actions)
-  const [shareCopied, setShareCopied] = useState<string | false>(false)
-  const [showStarModal, setShowStarModal] = useState(false)
-
-  // Thumbnail resolver — recomputed when segments change (lazy, returns cached fn)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const thumbResolver = useMemo(() => getThumbnailResolver(), [availableSegments, status])
-
-  // Sync document title with active dataset + segment
-  useEffect(() => {
-    if (status === 'ready' && currentSegment) {
-      const datasetName = getManifest().name
-      const shortSeg = currentSegment.length > 20
-        ? `${currentSegment.slice(0, 8)}…${currentSegment.slice(-8)}`
-        : currentSegment
-      document.title = `${shortSeg} — ${datasetName} · EgoLens`
-    } else {
-      document.title = 'EgoLens'
-    }
-  }, [status, currentSegment])
-
-  const handleShare = useCallback(() => {
-    const s = useSceneStore.getState()
-    const src = getUrlSource()
-    const cam = getCameraPose()
-    const state: ShareableState = {
-      dataset: src?.dataset,
-      baseUrl: src?.baseUrl,
-      scene: s.currentSegment ?? undefined,
-      frame: s.currentFrameIndex,
-      colormap: s.colormapMode,
-      boxMode: s.boxMode,
-      worldMode: s.worldMode,
-      sensors: [...s.visibleSensors],
-      pointSize: s.pointSize,
-      pointOpacity: s.pointOpacity,
-      activeCam: s.activeCam,
-      trailLength: s.trailLength,
-      lidarOverlay: s.showLidarOverlay,
-      keypoints3D: s.showKeypoints3D,
-      keypoints2D: s.showKeypoints2D,
-      cameraSeg: s.showCameraSeg,
-      speed: s.playbackSpeed,
-      followCam: s.followCam,
-      cameraPos: cam.position,
-      cameraTarget: cam.target,
-      cameraAzimuth: cam.azimuth,
-      cameraDistance: cam.distance || undefined,
-    }
-    const url = buildShareUrl(state)
-
-    // Build a human-readable summary of what's captured
-    const parts: string[] = [`Frame ${s.currentFrameIndex + 1}`, s.colormapMode]
-    const overlayCount = [s.showLidarOverlay, s.showKeypoints3D, s.showKeypoints2D, s.showCameraSeg].filter(Boolean).length
-    if (overlayCount > 0) parts.push(`${overlayCount} overlay${overlayCount > 1 ? 's' : ''}`)
-    if (s.activeCam != null) parts.push('POV cam')
-    const summary = parts.join(' · ')
-
-    trackShareView(src?.dataset ?? 'unknown')
-    navigator.clipboard.writeText(url).then(() => {
-      setShareCopied(summary)
-      setTimeout(() => setShareCopied(false), 3000)
-    })
-  }, [])
-
-  return (
-    <header style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '8px 16px',
-      background: colors.bgSurface,
-      borderBottom: `1px solid ${colors.border}`,
-      flexShrink: 0,
-      gap: '12px',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <h1
-          style={{
-            margin: 0,
-            fontSize: '15px',
-            fontWeight: 600,
-            fontFamily: fonts.sans,
-            letterSpacing: '-0.01em',
-            color: colors.textPrimary,
-            display: 'flex',
-            flexDirection: isMobile ? 'column' : 'row',
-            alignItems: isMobile ? 'flex-start' : 'baseline',
-            gap: isMobile ? '1px' : '6px',
-          }}
-        >
-          <span
-            onClick={() => { window.location.href = window.location.pathname }}
-            style={{ cursor: 'pointer', lineHeight: 1 }}
-            title="Back to home"
-          >EgoLens</span>
-          {status === 'ready' && <span style={{ fontWeight: 400, opacity: 0.4, fontSize: isMobile ? '10px' : '12px', lineHeight: 1 }}>{getManifest().name}</span>}
-        </h1>
-      </div>
-
-      {/* Segment selector — only shown when multiple segments available */}
-      {availableSegments.length > 1 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1, minWidth: 0, overflow: 'hidden' }}>
-        <button
-          onClick={() => {
-            const idx = availableSegments.indexOf(currentSegment ?? '')
-            if (idx > 0) actions.selectSegment(availableSegments[idx - 1])
-          }}
-          disabled={status === 'loading' || !currentSegment || availableSegments.indexOf(currentSegment) <= 0}
-          style={{
-            padding: '4px 6px',
-            fontSize: '12px',
-            backgroundColor: 'transparent',
-            color: colors.textSecondary,
-            border: `1px solid ${colors.border}`,
-            borderRadius: radius.sm,
-            cursor: status === 'loading' ? 'not-allowed' : 'pointer',
-            opacity: (!currentSegment || availableSegments.indexOf(currentSegment) <= 0) ? 0.3 : 1,
-            lineHeight: 1,
-          }}
-          title="Previous segment"
-        >&#9664;</button>
-        <SearchableSelect
-          items={availableSegments.map((seg, i): SelectItem => {
-            const meta = segmentMetas.get(seg)
-            const displayId = seg
-            const parts = [`#${i + 1}`, displayId]
-            if (meta) {
-              const loc = LOCATION_LABELS[meta.location] ?? meta.location
-              if (loc) parts.push(loc)
-              if (meta.timeOfDay) parts.push(meta.timeOfDay)
-            }
-            return { value: seg, label: parts.join(' · ') }
-          })}
-          value={currentSegment}
-          onChange={(val) => actions.selectSegment(val)}
-          disabled={status === 'loading'}
-          placeholder="-- select segment --"
-          title={currentSegment ?? undefined}
-          mobileLabel={currentSegment ? `#${availableSegments.indexOf(currentSegment) + 1} / ${availableSegments.length} · ${currentSegment.slice(0, 7)}` : undefined}
-          thumbnailResolver={thumbResolver}
-        />
-        <button
-          onClick={() => {
-            const idx = availableSegments.indexOf(currentSegment ?? '')
-            if (idx >= 0 && idx < availableSegments.length - 1) actions.selectSegment(availableSegments[idx + 1])
-          }}
-          disabled={status === 'loading' || !currentSegment || availableSegments.indexOf(currentSegment) >= availableSegments.length - 1}
-          style={{
-            padding: '4px 6px',
-            fontSize: '12px',
-            backgroundColor: 'transparent',
-            color: colors.textSecondary,
-            border: `1px solid ${colors.border}`,
-            borderRadius: radius.sm,
-            cursor: status === 'loading' ? 'not-allowed' : 'pointer',
-            opacity: (!currentSegment || availableSegments.indexOf(currentSegment) >= availableSegments.length - 1) ? 0.3 : 1,
-            lineHeight: 1,
-          }}
-          title="Next segment"
-        >&#9654;</button>
-        </div>
-      )}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Share View button — only in URL mode (local files can't be shared) */}
-        {status === 'ready' && hasUrlSource() && (
-          <div style={{ position: 'relative', flexShrink: 0 }}>
-            <button
-              onClick={handleShare}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: isMobile ? '6px' : '4px 10px',
-                fontSize: '11px',
-                fontFamily: fonts.sans,
-                color: shareCopied ? colors.accent : colors.textDim,
-                backgroundColor: 'transparent',
-                border: `1px solid ${shareCopied ? colors.accent : colors.border}`,
-                borderRadius: radius.sm,
-                cursor: 'pointer',
-                transition: 'color 0.15s, border-color 0.15s',
-                whiteSpace: 'nowrap',
-              }}
-              onMouseEnter={(e) => {
-                if (!shareCopied) {
-                  e.currentTarget.style.color = colors.textSecondary
-                  e.currentTarget.style.borderColor = colors.textDim
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!shareCopied) {
-                  e.currentTarget.style.color = colors.textDim
-                  e.currentTarget.style.borderColor = colors.border
-                }
-              }}
-              title="Copy link with current view state (frame, colormap, overlays, sensors…)"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              </svg>
-              {isMobile ? null : (shareCopied ? `Copied — ${shareCopied}` : 'Share View')}
-            </button>
-            {/* Mobile toast — appears below the button */}
-            {isMobile && shareCopied && (
-              <div style={{
-                position: 'absolute',
-                top: 'calc(100% + 6px)',
-                right: 0,
-                padding: '5px 10px',
-                fontSize: '10px',
-                fontFamily: fonts.sans,
-                color: colors.accent,
-                backgroundColor: 'rgba(26, 31, 53, 0.95)',
-                border: `1px solid ${colors.accent}`,
-                borderRadius: radius.sm,
-                whiteSpace: 'nowrap',
-                zIndex: 100,
-                animation: 'shareToastIn 0.2s ease-out',
-              }}>
-                <style>{`@keyframes shareToastIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-                Copied — {shareCopied}
-              </div>
-            )}
-          </div>
-        )}
-        <button
-          onClick={() => { setShowStarModal(true); trackStarModalOpen(isMobile ? 'mobile' : 'desktop') }}
-          title="Star on GitHub"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: isMobile ? '6px' : '4px 10px',
-            fontSize: '11px',
-            fontFamily: fonts.sans,
-            fontWeight: 500,
-            color: colors.textDim,
-            backgroundColor: 'transparent',
-            border: `1px solid ${colors.border}`,
-            borderRadius: radius.sm,
-            cursor: 'pointer',
-            transition: 'all 0.15s',
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#FFD43B'; e.currentTarget.style.borderColor = 'rgba(255, 212, 59, 0.4)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="#FFD43B" stroke="#FFD43B" strokeWidth="1">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-          </svg>
-          {!isMobile && 'Star on GitHub'}
-        </button>
-      </div>
-
-      {/* ── Star modal (mobile) ── */}
-      {showStarModal && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowStarModal(false); trackStarDismiss(isMobile ? 'mobile' : 'desktop') } }}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0, 0, 0, 0.7)',
-            backdropFilter: 'blur(4px)',
-            padding: '24px',
-          }}
-        >
-          <div style={{
-            maxWidth: '340px',
-            width: '100%',
-            padding: '28px 24px',
-            backgroundColor: 'rgba(26, 31, 53, 0.97)',
-            border: `1px solid ${colors.border}`,
-            borderRadius: '16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '16px',
-            textAlign: 'center',
-          }}>
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="#FFD43B" stroke="#FFD43B" strokeWidth="0.5">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
-            <div style={{
-              fontSize: '15px',
-              fontFamily: fonts.sans,
-              fontWeight: 600,
-              color: colors.textPrimary,
-              lineHeight: 1.5,
-            }}>
-              Help us keep EgoLens going
-            </div>
-            <div style={{
-              fontSize: '13px',
-              fontFamily: fonts.sans,
-              color: colors.textSecondary,
-              lineHeight: 1.6,
-            }}>
-              Let's make AV datasets more accessible together. A star helps others discover this project!
-            </div>
-            <a
-              href="https://github.com/egolens/egolens"
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => { setShowStarModal(false); trackStarClick(isMobile ? 'mobile' : 'desktop') }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                width: '100%',
-                padding: '12px',
-                fontSize: '14px',
-                fontFamily: fonts.sans,
-                fontWeight: 600,
-                color: '#000',
-                backgroundColor: '#FFD43B',
-                border: 'none',
-                borderRadius: radius.md,
-                textDecoration: 'none',
-                transition: 'opacity 0.15s',
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-              </svg>
-              Star us on GitHub
-            </a>
-            <button
-              onClick={() => { setShowStarModal(false); trackStarDismiss(isMobile ? 'mobile' : 'desktop') }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: colors.textDim,
-                fontSize: '12px',
-                fontFamily: fonts.sans,
-                cursor: 'pointer',
-                padding: '4px',
-              }}
-            >
-              Maybe later
-            </button>
-          </div>
-        </div>
-      )}
-    </header>
-  )
-}
 
 
 // ---------------------------------------------------------------------------
@@ -806,6 +481,273 @@ function useIsMobile(breakpoint = 600) {
 }
 
 // ---------------------------------------------------------------------------
+// Landing page components
+// ---------------------------------------------------------------------------
+
+const USE_CASE_TYPES = [
+  { type: 'near_miss',                      label: 'Near miss',             color: '#E24B4A', subtitle: 'Highest priority' },
+  { type: 'cyclist_pedestrian_interaction', label: 'Cyclist + pedestrian',  color: '#534AB7', subtitle: 'VRU interactions' },
+  { type: 'mid_block_crossing',             label: 'Mid-block crossing',    color: '#D85A30', subtitle: 'Unmarked crossings' },
+  { type: 'dense_pedestrian',               label: 'Dense pedestrian',      color: '#378ADD', subtitle: 'Crowded scenes' },
+  { type: 'pudo',                           label: 'PUDO',                  color: '#1D9E75', subtitle: 'Pickup / dropoff zones' },
+  { type: 'cyclist_interaction',            label: 'Cyclist interaction',   color: '#BA7517', subtitle: 'Bike lane conflicts' },
+] as const
+
+type ScenarioItem = { id: string; type: string; location: string; label: string; dataset: string; base_url: string; disabled?: boolean; img_url?: string | null }
+const _scenarios = scenarioIndex as ScenarioItem[]
+
+function useCaseCounts() {
+  const counts: Record<string, number> = {}
+  for (const s of _scenarios) {
+    counts[s.type] = (counts[s.type] || 0) + 1
+  }
+  return counts
+}
+
+function locationCounts() {
+  const counts: Record<string, number> = {}
+  for (const s of _scenarios) {
+    if (s.location) counts[s.location] = (counts[s.location] || 0) + 1
+  }
+  // Sort descending by count
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])
+}
+
+function UseCaseGrid({ isMobile }: { isMobile: boolean }) {
+  const setTypeFilter = useFilterStore(s => s.setTypeFilter)
+  const counts = useCaseCounts()
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+      gap: '10px',
+      width: '100%',
+      maxWidth: '680px',
+    }}>
+      {USE_CASE_TYPES.map(({ type, label, color, subtitle }) => (
+        <button
+          key={type}
+          onClick={() => setTypeFilter(type)}
+          style={{
+            display: 'flex', alignItems: 'stretch',
+            padding: 0, margin: 0,
+            backgroundColor: '#FFFFFF',
+            border: `1px solid ${colors.border}`,
+            borderRadius: radius.md,
+            overflow: 'hidden',
+            cursor: 'pointer',
+            transition: 'box-shadow 0.15s, border-color 0.15s',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+            textAlign: 'left',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)'; e.currentTarget.style.borderColor = color }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'; e.currentTarget.style.borderColor = colors.border }}
+        >
+          {/* Colored left border */}
+          <div style={{ width: 4, flexShrink: 0, backgroundColor: color }} />
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, fontFamily: fonts.sans, color: colors.textPrimary }}>{label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: fonts.sans, color, flexShrink: 0 }}>{counts[type] ?? 0}</span>
+            </div>
+            <span style={{ fontSize: 11, fontFamily: fonts.sans, color: colors.textDim }}>{subtitle}</span>
+          </div>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function CitiesRow() {
+  const setSearchQuery = useFilterStore(s => s.setSearchQuery)
+  const setTypeFilter = useFilterStore(s => s.setTypeFilter)
+  const locs = locationCounts()
+
+  return (
+    <div style={{
+      display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center',
+      width: '100%', maxWidth: '680px',
+    }}>
+      {locs.map(([loc, count]) => (
+        <button
+          key={loc}
+          onClick={() => { setTypeFilter('all'); setSearchQuery(loc) }}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '5px 12px',
+            fontSize: 12, fontFamily: fonts.sans, fontWeight: 500,
+            color: colors.textSecondary,
+            backgroundColor: '#FFFFFF',
+            border: `1px solid ${colors.border}`,
+            borderRadius: radius.pill,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.accent; e.currentTarget.style.color = colors.accent }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textSecondary }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" />
+          </svg>
+          {loc}
+          <span style={{ fontWeight: 700, color: colors.textPrimary, fontSize: 11 }}>{count}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const LS_SENT_KEY = 'av_triage_encord_sent'
+const ENCORD_PROJECT_URL = 'https://app.encord.com/projects/view/1b44da5a-ad5d-425c-818b-014be4dbce14'
+
+function useSentIds(): string[] {
+  const [ids, setIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_SENT_KEY)
+      if (raw) return JSON.parse(raw) as string[]
+    } catch { /* ignore */ }
+    return []
+  })
+
+  useEffect(() => {
+    const check = () => {
+      try {
+        const raw = localStorage.getItem(LS_SENT_KEY)
+        if (raw) setIds(JSON.parse(raw) as string[])
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('storage', check)
+    const interval = setInterval(check, 2000)
+    return () => { window.removeEventListener('storage', check); clearInterval(interval) }
+  }, [])
+
+  return ids
+}
+
+function TriageProgress() {
+  const total = _scenarios.filter(s => !s.disabled).length
+  const sentIds = useSentIds()
+  const sentCount = sentIds.length
+  const sentOnly = useFilterStore(s => s.sentOnly)
+  const setSentOnly = useFilterStore(s => s.setSentOnly)
+
+  if (sentCount === 0) return null
+
+  const pct = Math.min((sentCount / total) * 100, 100)
+
+  return (
+    <div
+      onClick={() => setSentOnly(!sentOnly)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 16px',
+        backgroundColor: sentOnly ? colors.accentSubtle : '#FFFFFF',
+        border: `1px solid ${sentOnly ? colors.accentDim : colors.border}`,
+        borderRadius: radius.md,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        maxWidth: '400px', width: '100%',
+        cursor: 'pointer',
+        transition: 'all 0.15s',
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={colors.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontFamily: fonts.sans, fontWeight: 600, color: colors.textPrimary }}>
+            {sentOnly ? `Showing ${sentCount} sent` : `${sentCount} of ${total} sent to Encord`}
+          </span>
+          <span style={{ fontSize: 10, fontFamily: fonts.sans, color: sentOnly ? colors.accent : colors.textDim }}>
+            {sentOnly ? 'Show all' : `${pct.toFixed(0)}%`}
+          </span>
+        </div>
+        <div style={{ width: '100%', height: 4, backgroundColor: colors.bgOverlay, borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', backgroundColor: colors.accent, borderRadius: 2, transition: 'width 0.3s ease' }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RecentlySent() {
+  const sentIds = useSentIds()
+  if (sentIds.length === 0) return null
+
+  // Get last 4 sent, most recent first
+  const recentIds = sentIds.slice(-4).reverse()
+  const scenarioMap = new Map(_scenarios.map(s => [s.id, s]))
+  const recentScenarios = recentIds.map(id => scenarioMap.get(id)).filter(Boolean) as typeof _scenarios
+
+  if (recentScenarios.length === 0) return null
+
+  const typeColors: Record<string, string> = {
+    near_miss: '#E24B4A', cyclist_pedestrian_interaction: '#534AB7',
+    mid_block_crossing: '#D85A30', dense_pedestrian: '#378ADD',
+    pudo: '#1D9E75', cyclist_interaction: '#BA7517',
+  }
+
+  return (
+    <div style={{ width: '100%', maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 11, fontFamily: fonts.sans, fontWeight: 600, color: colors.textDim, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        Recently sent
+      </div>
+      <div style={{ display: 'flex', gap: 10, overflowX: 'auto' }}>
+        {recentScenarios.map((s) => {
+          const tc = typeColors[s.type] ?? colors.textDim
+          const imgUrl = s.dataset === 'argoverse2' && s.base_url
+            ? `${s.base_url}sensors/cameras/ring_front_center/315968510419534000.jpg`
+            : ('img_url' in s ? s.img_url : null)
+          return (
+            <div key={s.id} style={{
+              flex: '0 0 200px', minWidth: 200,
+              backgroundColor: '#FFFFFF',
+              border: `1px solid ${colors.border}`,
+              borderRadius: radius.md,
+              overflow: 'hidden',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+            }}>
+              {imgUrl && (
+                <img src={imgUrl} loading="lazy" alt="" style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} />
+              )}
+              <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, fontFamily: fonts.sans, color: colors.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.label}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{
+                    display: 'inline-block', padding: '1px 6px', fontSize: 9,
+                    fontFamily: fonts.sans, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+                    color: tc, backgroundColor: `${tc}12`, border: `1px solid ${tc}25`,
+                    borderRadius: radius.pill, lineHeight: 1.7,
+                  }}>
+                    {s.type.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <a
+                  href={ENCORD_PROJECT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    fontSize: 10, fontFamily: fonts.sans, fontWeight: 600,
+                    color: colors.accent, textDecoration: 'none',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
+                >
+                  Open in Encord &rarr;
+                </a>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Drop Zone — shown when no data is loaded
 // ---------------------------------------------------------------------------
 
@@ -815,14 +757,6 @@ function DropZone({ onFilesLoaded }: { onFilesLoaded: (segments: Map<string, Map
   const [scanning, setScanning] = useState(false)
   const dragCounter = useRef(0)
   const isMobile = useIsMobile()
-
-  // URL loading state
-  const [urlDataset, setUrlDataset] = useState<string>('argoverse2')
-  const [urlInput, setUrlInput] = useState('')
-  const [urlSegment, setUrlSegment] = useState('')
-  const [urlLoading, setUrlLoading] = useState(false)
-  const [urlError, setUrlError] = useState<string | null>(null)
-  const loadFromUrl = useSceneStore((s) => s.actions.loadFromUrl)
 
   const handleFiles = useCallback(async (segments: Map<string, Map<string, File>>) => {
     if (segments.size === 0) {
@@ -891,23 +825,6 @@ function DropZone({ onFilesLoaded }: { onFilesLoaded: (segments: Map<string, Map
     e.stopPropagation()
   }, [])
 
-  const onPickFolder = useCallback(async () => {
-    setScanning(true)
-    setError(null)
-    try {
-      const segments = await pickAndScanFolder()
-      await handleFiles(segments)
-    } catch (err) {
-      // User cancelled picker — not an error
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        setScanning(false)
-        return
-      }
-      setError(`Failed to scan folder: ${err instanceof Error ? err.message : String(err)}`)
-      setScanning(false)
-    }
-  }, [handleFiles])
-
   return (
     <div
       className="dropzone-scroll"
@@ -925,502 +842,94 @@ function DropZone({ onFilesLoaded }: { onFilesLoaded: (segments: Map<string, Map
         padding: isMobile ? '20px 16px' : '40px',
         overflow: 'auto',
         transition: 'background-color 0.2s',
-        backgroundColor: dragging ? 'rgba(0, 232, 157, 0.05)' : 'transparent',
+        backgroundColor: dragging ? 'rgba(91, 80, 214, 0.03)' : '#FFFFFF',
       }}
     >
       <style>{`
         .dropzone-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .dropzone-scroll::-webkit-scrollbar-track { background: transparent; }
-        .dropzone-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
-        .dropzone-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
-        .dropzone-scroll { scrollbar-color: rgba(255,255,255,0.15) transparent; scrollbar-width: thin; }
+        .dropzone-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
+        .dropzone-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+        .dropzone-scroll { scrollbar-color: rgba(0,0,0,0.1) transparent; scrollbar-width: thin; }
       `}</style>
-      {/* Safari warning — hidden on landing page for cleaner UX */}
 
-      {/* Intro */}
-      <div style={{
-        maxWidth: '520px',
-        textAlign: 'center',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-      }}>
+      {/* ── Hero ── */}
+      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', maxWidth: '560px' }}>
+        {/* Logo mark */}
         <div style={{
-          fontSize: '20px',
-          fontWeight: 700,
-          fontFamily: fonts.sans,
-          color: colors.textPrimary,
+          width: 52, height: 52, borderRadius: '12px',
+          background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.accentBlue} 100%)`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          boxShadow: `0 4px 20px rgba(91, 80, 214, 0.2)`,
         }}>
-          EgoLens
+          <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+            <circle cx="13" cy="13" r="4.5" fill="#FFF" opacity="0.9" />
+            <path d="M13 2.5 L13 7" stroke="#FFF" strokeWidth="2.2" strokeLinecap="round" opacity="0.7"/>
+            <path d="M13 19 L13 23.5" stroke="#FFF" strokeWidth="2.2" strokeLinecap="round" opacity="0.7"/>
+            <path d="M2.5 13 L7 13" stroke="#FFF" strokeWidth="2.2" strokeLinecap="round" opacity="0.7"/>
+            <path d="M19 13 L23.5 13" stroke="#FFF" strokeWidth="2.2" strokeLinecap="round" opacity="0.7"/>
+          </svg>
         </div>
+
+        {/* Heading + subtitle */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <h1 style={{
+            margin: 0, fontSize: isMobile ? '22px' : '28px', fontWeight: 700,
+            fontFamily: fonts.sans, letterSpacing: '-0.02em', color: colors.textPrimary, lineHeight: 1.2,
+          }}>
+            Find the right scenarios to label
+          </h1>
+          <p style={{
+            margin: 0, fontSize: isMobile ? '13px' : '14px',
+            fontFamily: fonts.sans, color: colors.textSecondary, lineHeight: 1.7,
+          }}>
+            Search 150+ scored AV scenarios, preview in 3D,<br />
+            send to Encord in one click.
+          </p>
+        </div>
+
+      </div>
+
+      {/* ── Critical use cases ── */}
+      <UseCaseGrid isMobile={isMobile} />
+
+      {/* ── Cities ── */}
+      <CitiesRow />
+
+      {/* ── Triage progress ── */}
+      <TriageProgress />
+
+      {/* ── Recently sent ── */}
+      <RecentlySent />
+
+      {/* Scanning indicator (when files dropped) */}
+      {scanning && (
         <div style={{
-          fontSize: isMobile ? '12px' : '13px',
+          fontSize: '14px',
           fontFamily: fonts.sans,
           color: colors.textSecondary,
-          lineHeight: 1.7,
         }}>
-          {isMobile
-            ? 'Visualize point clouds, cameras, and 3D annotations — straight from Waymo, nuScenes, and Argoverse 2.'
-            : <>Visualize point clouds, cameras, and 3D annotations in your browser<br />— straight from the most widely used autonomous driving datasets.<br />No conversion, no preprocessing.</>
-          }
+          Scanning folder for segments...
         </div>
-        {/* Dataset badges — outlined, info only */}
+      )}
+
+      {error && (
         <div style={{
-          display: 'flex',
-          gap: '8px',
-          alignSelf: 'center',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}>
-          {[
-            { label: 'Waymo v2', color: '#4285F4', href: 'https://waymo.com/open/download/' },
-            { label: 'nuScenes', color: '#00B4D8', href: 'https://www.nuscenes.org/' },
-            { label: 'Argoverse 2', color: '#FF6F00', href: 'https://www.argoverse.org/av2.html' },
-          ].map(({ label, color, href }) => (
-            <a
-              key={label}
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-block',
-                padding: '3px 10px',
-                fontSize: '11px',
-                fontFamily: fonts.sans,
-                fontWeight: 600,
-                color: color,
-                backgroundColor: 'transparent',
-                border: `1px solid ${color}`,
-                borderRadius: '4px',
-                textDecoration: 'none',
-                letterSpacing: '0.02em',
-                opacity: 0.7,
-                transition: 'opacity 0.15s',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7' }}
-            >
-              {label}
-            </a>
-          ))}
-        </div>
-
-        {/* Quick start — try with hosted data */}
-        <div style={{ display: 'flex', gap: isMobile ? '8px' : '10px', flexWrap: isMobile ? 'nowrap' : 'wrap', justifyContent: 'center', marginTop: '8px', width: '100%' }}>
-          {([
-            { dataset: 'nuscenes', label: 'Try nuScenes mini', url: 'https://data.egolens.org/nuscenes/', note: 'Hosted by EgoLens · 10 scenes', shortNote: '10 scenes' },
-            { dataset: 'argoverse2', label: 'Try Argoverse 2', url: 'https://argoverse.s3.us-east-1.amazonaws.com/datasets/av2/sensor/val/', note: 'Via Argoverse S3 · validation split', shortNote: 'validation split' },
-          ] as const).map((preset) => {
-            const isActive = urlDataset === preset.dataset && urlInput === preset.url
-            return (
-              <button
-                key={preset.dataset}
-                onClick={() => {
-                  trackPresetClick(preset.dataset)
-                  setUrlDataset(preset.dataset)
-                  setUrlInput(preset.url)
-                  setUrlSegment('')
-                  setUrlError(null)
-                }}
-                disabled={urlLoading}
-                title={preset.note}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '2px',
-                  padding: isMobile ? '8px 12px' : '10px 20px',
-                  fontSize: isMobile ? '12px' : '13px',
-                  fontFamily: fonts.sans,
-                  fontWeight: 600,
-                  color: isActive ? '#000' : colors.textPrimary,
-                  backgroundColor: isActive ? colors.accent : colors.bgOverlay,
-                  border: `1px solid ${isActive ? colors.accent : colors.border}`,
-                  borderRadius: radius.md,
-                  cursor: urlLoading ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.15s',
-                  opacity: urlLoading ? 0.5 : 1,
-                  flex: isMobile ? 1 : undefined,
-                  minWidth: isMobile ? 0 : '180px',
-                }}
-                onMouseEnter={(e) => {
-                  if (!urlLoading && !isActive) {
-                    e.currentTarget.style.borderColor = colors.accent
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 232, 157, 0.08)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.borderColor = colors.border
-                    e.currentTarget.style.backgroundColor = colors.bgOverlay
-                  }
-                }}
-              >
-                {preset.label}
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 400,
-                  color: isActive ? 'rgba(0,0,0,0.6)' : colors.textDim,
-                }}>{isMobile ? preset.shortNote : preset.note}</span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* ── or load your own data ── */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        width: '100%',
-        maxWidth: '520px',
-      }}>
-        <div style={{ flex: 1, height: '1px', background: colors.border }} />
-        <span style={{
-          fontSize: '11px',
+          fontSize: '12px',
           fontFamily: fonts.sans,
-          color: colors.textDim,
-          textTransform: 'uppercase' as const,
-          letterSpacing: '0.08em',
-          whiteSpace: 'nowrap',
-        }}>or load your own data</span>
-        <div style={{ flex: 1, height: '1px', background: colors.border }} />
-      </div>
-
-      {/* URL input section */}
-      <div style={{
-        width: '100%',
-        maxWidth: '520px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '10px',
-      }}>
-        {/* Dataset selector */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <label style={{ fontSize: '12px', fontFamily: fonts.sans, color: colors.textSecondary, whiteSpace: 'nowrap' }}>
-            Dataset
-          </label>
-          <select
-            value={urlDataset}
-            onChange={(e) => { setUrlDataset(e.target.value); setUrlInput(''); setUrlSegment(''); setUrlError(null) }}
-            disabled={urlLoading}
-            style={{
-              flex: 1,
-              padding: '7px 10px',
-              fontSize: '12px',
-              fontFamily: fonts.sans,
-              backgroundColor: colors.bgOverlay,
-              color: colors.textPrimary,
-              border: `1px solid ${colors.border}`,
-              borderRadius: radius.sm,
-              outline: 'none',
-              cursor: urlLoading ? 'not-allowed' : 'pointer',
-            }}
-          >
-            <option value="argoverse2">Argoverse 2</option>
-            <option value="nuscenes">nuScenes</option>
-            <option value="waymo">Waymo</option>
-          </select>
-        </div>
-
-        {/* URL input + Load button */}
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            type="url"
-            value={urlInput}
-            onChange={(e) => { setUrlInput(e.target.value); setUrlError(null) }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && urlInput.trim() && !urlLoading) {
-                handleUrlLoad()
-              }
-            }}
-            disabled={urlLoading}
-            placeholder={
-              urlDataset === 'nuscenes'
-                ? 'https://your-server.com/nuscenes/'
-                : urlDataset === 'waymo'
-                  ? 'https://your-server.com/waymo_data/'
-                  : 'https://your-server.com/av2/sensor/train/'
-            }
-            style={{
-              flex: 1,
-              padding: '8px 12px',
-              fontSize: '12px',
-              fontFamily: fonts.mono,
-              backgroundColor: colors.bgOverlay,
-              color: colors.textPrimary,
-              border: `1px solid ${urlError ? '#FF6B6B' : colors.border}`,
-              borderRadius: radius.sm,
-              outline: 'none',
-              transition: 'border-color 0.15s',
-            }}
-            onFocus={(e) => {
-              if (!urlError) e.currentTarget.style.borderColor = colors.accent
-            }}
-            onBlur={(e) => {
-              if (!urlError) e.currentTarget.style.borderColor = colors.border
-            }}
-          />
-          <button
-            onClick={handleUrlLoad}
-            disabled={!urlInput.trim() || urlLoading}
-            style={{
-              padding: '8px 20px',
-              fontSize: '12px',
-              fontFamily: fonts.sans,
-              fontWeight: 600,
-              backgroundColor: !urlInput.trim() || urlLoading ? colors.bgOverlay : colors.accent,
-              color: !urlInput.trim() || urlLoading ? colors.textDim : '#000',
-              border: 'none',
-              borderRadius: radius.sm,
-              cursor: !urlInput.trim() || urlLoading ? 'not-allowed' : 'pointer',
-              transition: 'all 0.15s',
-              whiteSpace: 'nowrap',
-              minWidth: '72px',
-            }}
-          >
-            {urlLoading ? '…' : 'Load'}
-          </button>
-        </div>
-
-        {/* Hint: what URL to provide */}
-        <div style={{
-          fontSize: '11px',
-          fontFamily: fonts.sans,
-          color: colors.textDim,
-          lineHeight: 1.4,
-          padding: '0 2px',
-        }}>
-          {urlDataset === 'nuscenes' && 'Point to a folder that contains v1.0-mini/ or v1.0-trainval/ with JSON metadata and sample data.'}
-          {urlDataset === 'waymo' && 'Point to a folder that contains Waymo v2 component directories (vehicle_pose/, lidar/, camera_image/, …).'}
-          {urlDataset === 'argoverse2' && 'Point to an AV2 log folder, or a parent directory (e.g. .../sensor/train/) to discover all logs.'}
-          {' '}Works with any static file server, S3 bucket, or localhost.
-        </div>
-
-        {/* Optional scene/segment ID for direct access (all datasets) */}
-        <input
-          type="text"
-          value={urlSegment}
-          onChange={(e) => { setUrlSegment(e.target.value); setUrlError(null) }}
-          disabled={urlLoading}
-          placeholder={
-            urlDataset === 'waymo'
-              ? 'Segment ID (optional — e.g. 10455472356147194054_1560_000_1580_000)'
-              : urlDataset === 'nuscenes'
-                ? 'Scene name (optional — e.g. scene-0061)'
-                : 'Log ID (optional — e.g. 00a6ffc1-6ce9-3bc3-a060-6006e9893a1a)'
-          }
-          style={{
-            padding: '8px 12px',
-            fontSize: '12px',
-            fontFamily: fonts.mono,
-            backgroundColor: colors.bgOverlay,
-            color: colors.textPrimary,
-            border: `1px solid ${colors.border}`,
-            borderRadius: radius.sm,
-            outline: 'none',
-            transition: 'border-color 0.15s',
-          }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = colors.accent }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = colors.border }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && urlInput.trim() && !urlLoading) {
-              handleUrlLoad()
-            }
-          }}
-        />
-
-        {/* URL error */}
-        {urlError && (
-          <div style={{
-            fontSize: '11px',
-            fontFamily: fonts.sans,
-            color: '#FF6B6B',
-            padding: '6px 10px',
-            backgroundColor: 'rgba(255, 107, 107, 0.1)',
-            borderRadius: radius.sm,
-            lineHeight: 1.5,
-          }}>
-            {urlError}
-          </div>
-        )}
-
-        {/* Hint */}
-        <div style={{
-          fontSize: '11px',
-          fontFamily: fonts.sans,
-          color: colors.textDim,
+          color: colors.error,
           textAlign: 'center',
-          lineHeight: 1.6,
+          padding: '8px 16px',
+          backgroundColor: 'rgba(239, 68, 68, 0.06)',
+          borderRadius: radius.sm,
+          maxWidth: '520px',
         }}>
-          URL only: auto-discovers all segments. URL + ID: loads a specific segment directly.
+          {error}
         </div>
-
-      </div>
-
-      {/* ── or divider ── */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        maxWidth: '520px',
-        width: '100%',
-        margin: '4px 0',
-      }}>
-        <div style={{ flex: 1, height: '1px', backgroundColor: colors.border }} />
-        <span style={{ fontSize: '11px', fontFamily: fonts.sans, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          or drop local files
-        </span>
-        <div style={{ flex: 1, height: '1px', backgroundColor: colors.border }} />
-      </div>
-
-      {/* Drop area */}
-      <div style={{
-        width: '100%',
-        maxWidth: '520px',
-        padding: isMobile ? '20px 16px' : '32px 40px',
-        borderRadius: isMobile ? '12px' : '16px',
-        border: `2px dashed ${dragging ? colors.accent : colors.border}`,
-        backgroundColor: dragging ? 'rgba(0, 232, 157, 0.08)' : colors.bgSurface,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: isMobile ? '12px' : '16px',
-        transition: 'all 0.2s',
-        boxSizing: 'border-box',
-      }}>
-        {scanning ? (
-          <div style={{
-            fontSize: '14px',
-            fontFamily: fonts.sans,
-            color: colors.textSecondary,
-          }}>
-            Scanning folder for segments…
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={dragging ? colors.accent : colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                <line x1="12" y1="11" x2="12" y2="17" />
-                <polyline points="9 14 12 11 15 14" />
-              </svg>
-              <span style={{
-                fontSize: '14px',
-                fontWeight: 600,
-                fontFamily: fonts.sans,
-                color: colors.textPrimary,
-              }}>
-                Drop a dataset folder here
-              </span>
-              {hasDirectoryPicker() && (
-                <>
-                  <span style={{ fontSize: '12px', fontFamily: fonts.sans, color: colors.textDim }}>or</span>
-                  <button
-                    onClick={onPickFolder}
-                    style={{
-                      padding: '5px 14px',
-                      fontSize: '12px',
-                      fontFamily: fonts.sans,
-                      fontWeight: 500,
-                      backgroundColor: 'transparent',
-                      color: colors.accent,
-                      border: `1px solid ${colors.accent}`,
-                      borderRadius: radius.sm,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(0, 232, 157, 0.1)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'transparent'
-                    }}
-                  >
-                    Select Folder
-                  </button>
-                </>
-              )}
-            </div>
-            <div style={{
-              fontSize: '12px',
-              fontFamily: fonts.sans,
-              color: colors.textSecondary,
-            }}>
-              Waymo, nuScenes, or Argoverse 2 — auto-detected
-            </div>
-
-            {error && (
-              <div style={{
-                fontSize: '12px',
-                fontFamily: fonts.sans,
-                color: '#FF6B6B',
-                textAlign: 'center',
-                padding: '8px 16px',
-                backgroundColor: 'rgba(255, 107, 107, 0.1)',
-                borderRadius: radius.sm,
-              }}>
-                {error}
-              </div>
-            )}
-
-            {/* Hint — expected folder structures */}
-            <div style={{
-              fontSize: '10px',
-              fontFamily: fonts.mono,
-              color: colors.textDim,
-              textAlign: 'left',
-              lineHeight: 1.5,
-              display: isMobile ? 'none' : 'flex',
-              gap: '24px',
-              justifyContent: 'center',
-              flexWrap: 'wrap',
-            }}>
-              <pre style={{ margin: 0, fontFamily: 'inherit' }}>{
-`Waymo (drop this) 📂
-├── vehicle_pose/
-├── lidar/
-├── camera_image/
-└── …/*.parquet`
-              }</pre>
-              <pre style={{ margin: 0, fontFamily: 'inherit' }}>{
-`nuScenes (drop this) 📂
-├── v1.0-{mini,trainval,test}/
-├── samples/
-├── sweeps/
-└── lidarseg/`
-              }</pre>
-              <pre style={{ margin: 0, fontFamily: 'inherit' }}>{
-`AV2 log (drop this) 📂
-├── sensors/
-├── calibration/
-├── city_SE3_egovehicle…
-└── annotations.feather`
-              }</pre>
-            </div>
-          </>
-        )}
-      </div>
+      )}
     </div>
   )
 
-  async function handleUrlLoad() {
-    if (!urlInput.trim() || urlLoading) return
-    setUrlLoading(true)
-    setUrlError(null)
-
-    try {
-      const baseUrl = normalizeBaseUrl(urlInput)
-      const scene = urlSegment.trim() || undefined
-      trackDatasetLoad(urlDataset, 'url')
-      await loadFromUrl(urlDataset, baseUrl, scene)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setUrlError(msg)
-      setUrlLoading(false)
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,22 +1049,22 @@ function LoadingSkeleton() {
   )
 }
 
-/** Camera strip skeleton — matches real CameraPanel layout exactly */
+/** Camera thumbnail strip skeleton — matches CameraThumbnailStrip height */
 function CameraStripSkeleton() {
   const shimmerBg = `linear-gradient(90deg, ${colors.bgOverlay} 25%, ${colors.bgSurface} 50%, ${colors.bgOverlay} 75%)`
   return (
     <div style={{
-      height: 160,
+      height: 108,
       flexShrink: 0,
       display: 'flex',
-      gap: '6px',
-      padding: '6px 8px',
+      gap: '4px',
+      padding: '4px 6px',
       backgroundColor: colors.bgDeep,
       borderTop: `1px solid ${colors.borderSubtle}`,
       overflow: 'hidden',
     }}>
       <style>{shimmerStyle}</style>
-      {[1, 2, 3, 4, 5].map((i) => (
+      {[1, 2, 3, 4].map((i) => (
         <div key={i} style={{
           flex: 1,
           borderRadius: radius.sm,
@@ -1580,38 +1089,88 @@ function SensorView({ embedControls = 'full' }: { embedControls?: 'full' | 'mini
   const status = useSceneStore((s) => s.status)
   const hideOverlays = embedControls === 'none'
 
+  // Which camera is shown large on the left — defaults to FRONT
+  const [primaryCamId, setPrimaryCamera] = useState<number | null>(null)
+
+  // Reset to FRONT whenever a new dataset starts loading
+  useEffect(() => {
+    if (status === 'loading') setPrimaryCamera(null)
+  }, [status])
+
+  const cameras = getManifest().cameraSensors
+  const defaultId = cameras.find((c) => c.label === 'FRONT')?.id ?? cameras[0]?.id ?? 1
+  const primaryId = primaryCamId ?? defaultId
+
+  // Embed (controls=none): full-width LiDAR only — preserve original embed behaviour
+  if (hideOverlays) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0 }}>
+            {status === 'ready' ? (
+              <LidarViewer hideControls={true} />
+            ) : status === 'loading' ? (
+              <LoadingSkeleton />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', backgroundColor: colors.bgDeep, color: colors.textDim, fontFamily: fonts.sans, fontSize: '14px' }}>
+                3D LiDAR View
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* LiDAR 3D View — main area */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0 }}>
+
+      {/* ── Main row: large camera (left ~60%) + LiDAR 3D (right ~40%) ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+
+        {/* Large camera view */}
+        <div style={{ flex: 3, position: 'relative', overflow: 'hidden', borderRight: `1px solid ${colors.border}` }}>
           {status === 'ready' ? (
-            <>
-              <LidarViewer hideControls={hideOverlays} />
-              {/* ShortcutHints removed — ? key now toggles Keys popup in LidarViewer */}
-            </>
+            <CameraLargeView cameraId={primaryId} />
           ) : status === 'loading' ? (
-            <LoadingSkeleton />
+            <div style={{ position: 'absolute', inset: 0, backgroundColor: colors.bgDeep, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.2 }}>
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            </div>
           ) : (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              backgroundColor: colors.bgDeep,
-              color: colors.textDim,
-              fontFamily: fonts.sans,
-              fontSize: '14px',
-            }}>
-              3D LiDAR View
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgDeep, color: colors.textDim, fontFamily: fonts.sans, fontSize: '13px', flexDirection: 'column', gap: 10 }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.25 }}>
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+              Camera
             </div>
           )}
         </div>
+
+        {/* LiDAR 3D View */}
+        <div style={{ flex: 2, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0 }}>
+            {status === 'ready' ? (
+              <LidarViewer hideControls={false} />
+            ) : status === 'loading' ? (
+              <LoadingSkeleton />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', backgroundColor: colors.bgDeep, color: colors.textDim, fontFamily: fonts.sans, fontSize: '14px' }}>
+                3D LiDAR View
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Camera Image Strip — bottom (hidden when controls=none) */}
-      {status === 'ready' && !hideOverlays && <CameraPanel />}
-      {status === 'loading' && !hideOverlays && <CameraStripSkeleton />}
+      {/* ── Thumbnail strip: all other cameras ── */}
+      {status === 'ready' && cameras.length > 0 && (
+        <CameraThumbnailStrip primaryCamId={primaryId} onSelectCamera={setPrimaryCamera} />
+      )}
+      {status === 'loading' && <CameraStripSkeleton />}
     </div>
   )
 }
