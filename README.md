@@ -1,6 +1,6 @@
 # AV Triage
 
-**Find the right scenarios to label.** Browse 150+ scored autonomous vehicle scenarios, preview in 3D LiDAR, and send to [Encord](https://encord.com) for labeling — with pre-drawn 3D cuboid predictions.
+**Find the right scenarios to label.** Built on EgoLens 3D perception engine. Browse 150+ scored autonomous vehicle scenarios, preview in 3D LiDAR, and send to [Encord](https://encord.com) for labeling — with pre-drawn 3D cuboid predictions.
 
 Built for AV teams that need to prioritize which driving scenarios to annotate first.
 
