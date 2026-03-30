@@ -369,7 +369,7 @@ def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = 
             return _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
 
         if dataset == "nuscenes_mini":
-            return _send_nuscenes_to_encord(scenario_id, scenario_prefix)
+            return _send_nuscenes_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
 
         # ── AV2: try full 3D pipeline, fall back to image-only ──
         try:
@@ -733,13 +733,104 @@ def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: 
 # ---------------------------------------------------------------------------
 
 
-def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str) -> dict:
-    """nuScenes image-only send: download front camera from egolens.org, upload to Encord."""
-    import traceback
+def _resolve_nuscenes_base_url(scenario_id: str) -> str:
+    """Look up base_url for a nuScenes scenario from the scenario index."""
+    index_path = pathlib.Path(__file__).parent.parent / "src" / "data" / "scenario_index.json"
+    if index_path.exists():
+        with open(index_path) as f:
+            for entry in json.load(f):
+                if entry.get("id") == scenario_id and entry.get("dataset") == "nuscenes_mini":
+                    return entry.get("base_url", "")
+    return ""
 
+
+def _fetch_nuscenes_front_image(base_url: str, scene_token: str, frame_index: int | None) -> tuple[bytes, str]:
+    """
+    Fetch the CAM_FRONT image for a specific frame of a nuScenes scene.
+    Downloads metadata JSONs, walks the sample linked list, finds the right frame.
+    Returns (jpeg_bytes, filename).
+    """
+    # Detect split by probing
+    detected_split = None
+    for split in ("v1.0-mini", "v1.0-trainval", "v1.0-test"):
+        try:
+            resp = http_requests.head(f"{base_url}{split}/scene.json", timeout=10)
+            if resp.status_code == 200:
+                detected_split = split
+                break
+        except Exception:
+            continue
+    if not detected_split:
+        raise Exception("Could not detect nuScenes split")
+
+    meta_base = f"{base_url}{detected_split}/"
+
+    # Fetch required metadata
+    scenes = http_requests.get(f"{meta_base}scene.json", timeout=30).json()
+    samples = http_requests.get(f"{meta_base}sample.json", timeout=30).json()
+    sample_data_list = http_requests.get(f"{meta_base}sample_data.json", timeout=60).json()
+
+    # Build lookup maps
+    sample_by_token = {s["token"]: s for s in samples}
+    # sample_data grouped by sample_token, filtered to keyframes
+    sd_by_sample: dict[str, list] = {}
+    for sd in sample_data_list:
+        if sd.get("is_key_frame", False):
+            sd_by_sample.setdefault(sd["sample_token"], []).append(sd)
+
+    # Find our scene
+    scene = None
+    for sc in scenes:
+        if sc.get("name") == scene_token or sc.get("token") == scene_token:
+            scene = sc
+            break
+    if not scene:
+        raise Exception(f"Scene '{scene_token}' not found in {detected_split}")
+
+    # Walk sample linked list to build ordered frames
+    ordered_samples = []
+    cur = scene.get("first_sample_token")
+    while cur and cur in sample_by_token:
+        ordered_samples.append(sample_by_token[cur])
+        cur = sample_by_token[cur].get("next", "")
+
+    if not ordered_samples:
+        raise Exception(f"No samples found for scene '{scene_token}'")
+
+    # Pick frame
+    fi = frame_index if frame_index is not None else 0
+    fi = max(0, min(fi, len(ordered_samples) - 1))
+    target_sample = ordered_samples[fi]
+
+    # Find CAM_FRONT sample_data for this sample
+    sample_sds = sd_by_sample.get(target_sample["token"], [])
+    cam_front_sd = None
+    for sd in sample_sds:
+        fn = sd.get("filename", "")
+        if "CAM_FRONT/" in fn and "CAM_FRONT_LEFT" not in fn and "CAM_FRONT_RIGHT" not in fn:
+            cam_front_sd = sd
+            break
+
+    if not cam_front_sd:
+        raise Exception(f"No CAM_FRONT data for frame {fi} of scene '{scene_token}'")
+
+    # Download the image
+    filename = cam_front_sd["filename"]
+    img_url = f"{base_url}{filename}"
+    print(f"[nuscenes] Downloading frame {fi} CAM_FRONT: {img_url}")
+    resp = http_requests.get(img_url, timeout=30)
+    resp.raise_for_status()
+    return resp.content, filename
+
+
+def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str, frame_index: int | None = None) -> dict:
+    """nuScenes image-only send: fetch correct frame's front camera, upload to Encord."""
     client = get_encord()
     dataset_obj = client.get_dataset(DATASET_HASH)
     project = client.get_project(PROJECT_HASH)
+
+    fi_label = f"f{frame_index}" if frame_index is not None else "f0"
+    title = f"{scenario_prefix}_{fi_label}"
 
     # Check if already exists
     existing_row = find_existing_data_row(dataset_obj, scenario_prefix)
@@ -753,26 +844,13 @@ def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str) -> dict:
                 return {"success": True, "status": "already_existed", "already_existed": True, "uid": uid, "title": existing_row.title}
             raise
 
-    # Find the scenario in scenario_index to get img_url
-    import json as _json
-    index_path = pathlib.Path(__file__).parent.parent / "src" / "data" / "scenario_index.json"
-    img_url = None
-    if index_path.exists():
-        with open(index_path) as f:
-            for entry in _json.load(f):
-                if entry.get("id") == scenario_id and entry.get("dataset") == "nuscenes_mini":
-                    img_url = entry.get("img_url")
-                    break
+    # Resolve base_url and fetch the correct frame image
+    base_url = _resolve_nuscenes_base_url(scenario_id)
+    if not base_url:
+        raise HTTPException(status_code=400, detail=f"No base_url found for nuScenes scenario {scenario_id}")
 
-    if not img_url:
-        raise HTTPException(status_code=400, detail=f"No image URL found for nuScenes scenario {scenario_id}")
+    image_bytes, _ = _fetch_nuscenes_front_image(base_url, scenario_id, frame_index)
 
-    print(f"[nuscenes] Downloading front camera from {img_url}...")
-    resp = http_requests.get(img_url, timeout=30)
-    resp.raise_for_status()
-    image_bytes = resp.content
-
-    title = f"{scenario_prefix}_{scenario_id}"
     uid = upload_image_to_encord(dataset_obj, image_bytes, title)
 
     try:

@@ -78,7 +78,10 @@ function ScenarioThumbnail({ scenario }: { scenario: Scenario }) {
   const tc = TYPE_COLORS[scenario.type] ?? DEFAULT_TYPE_COLOR;
   const isWaymo = WAYMO_DATASETS.has(scenario.dataset);
   const isWaymoLocked = isWaymo && !scenario.base_url;
-  const isWaymoReady = isWaymo && !!scenario.base_url;
+  // Waymo cards with base_url: skip thumbnail area entirely, let card content show
+  if (isWaymo && scenario.base_url && (url === null || !url || failed)) {
+    return null;
+  }
 
   if (url === null || failed) {
     return (
@@ -86,8 +89,6 @@ function ScenarioThumbnail({ scenario }: { scenario: Scenario }) {
         width: '100%', height: 120, flexShrink: 0,
         background: isWaymoLocked
           ? `linear-gradient(160deg, #f5f0e8 0%, #F8F9FA 60%)`
-          : isWaymoReady
-          ? `linear-gradient(160deg, #f0ede4 0%, #faf8f3 50%, #F8F9FA 100%)`
           : `linear-gradient(135deg, ${tc.bg}, #F8F9FA 80%)`,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -100,15 +101,6 @@ function ScenarioThumbnail({ scenario }: { scenario: Scenario }) {
             </svg>
             <span style={{ fontSize: 8, fontFamily: fonts.sans, color: '#92805A', opacity: 0.5, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
               Preview locked
-            </span>
-          </>
-        ) : isWaymoReady ? (
-          <>
-            <svg width="28" height="10" viewBox="0 0 56 20" fill="none" style={{ opacity: 0.7 }}>
-              <text x="0" y="16" fontFamily="Arial Black, sans-serif" fontWeight="900" fontSize="18" fill="#92805A" letterSpacing="2">WAYMO</text>
-            </svg>
-            <span style={{ fontSize: 9, fontFamily: fonts.sans, color: '#92805A', opacity: 0.6, fontWeight: 500, textAlign: 'center', lineHeight: '1.3', maxWidth: '90%' }}>
-              {scenario.location || formatType(scenario.type)}
             </span>
           </>
         ) : (
