@@ -56,6 +56,21 @@ LIDAR_ONTOLOGY_HASH = "1f51b0e3-86c1-4906-8494-a1b3abcae35c"
 STORAGE_FOLDER_HASH = "e6b191f4-51bf-4409-bf41-1df05b07360e"
 WAYMO_BOX_TYPE_MAP = {1: "Regular Vehicle", 2: "Pedestrian", 3: "Stop Sign", 4: "Bicyclist"}
 
+# AV2 3D pipeline
+AV2_3D_FOLDER = "av2_3d_pipeline"
+AV2_CATEGORY_MAP = {
+    "REGULAR_VEHICLE": "Regular Vehicle",
+    "PEDESTRIAN": "Pedestrian",
+    "BICYCLIST": "Bicyclist",
+    "BUS": "Bus",
+    "TRUCK": "Truck",
+    "MOTORCYCLIST": "Motorcyclist",
+    "BICYCLE": "Bicycle",
+    "STOP_SIGN": "Stop Sign",
+    "BOLLARD": "Bollard",
+    "CONSTRUCTION_CONE": "Construction Cone",
+}
+
 # ---------------------------------------------------------------------------
 # Singletons & caches
 # ---------------------------------------------------------------------------
@@ -350,72 +365,45 @@ def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = 
         if dataset in ("waymo_v2", "waymo_perception"):
             scenario_prefix = f"waymo_{scenario_id[:8]}"
             return _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
+
+        # ── AV2: try full 3D pipeline, fall back to image-only ──
+        try:
+            return _send_av2_3d_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
+        except Exception as e3d:
+            print(f"[av2] 3D pipeline failed, falling back to image-only: {e3d}")
+
+        # Fallback: image-only upload
         client = get_encord()
-        dataset = client.get_dataset(DATASET_HASH)
+        dataset_obj = client.get_dataset(DATASET_HASH)
         project = client.get_project(PROJECT_HASH)
 
-        # ── Step 1: Check if image already exists in dataset ──
-        existing_row = find_existing_data_row(dataset, scenario_prefix)
-
+        existing_row = find_existing_data_row(dataset_obj, scenario_prefix)
         if existing_row:
             uid = existing_row.uid
             try:
                 project.create_label_row(uid=uid)
-                return {
-                    "success": True,
-                    "status": "task_created",
-                    "already_existed": False,
-                    "uid": uid,
-                    "title": existing_row.title,
-                }
+                return {"success": True, "status": "task_created", "already_existed": False, "uid": uid, "title": existing_row.title}
             except Exception as inner:
                 if _is_duplicate_error(inner):
-                    return {
-                        "success": True,
-                        "status": "already_existed",
-                        "already_existed": True,
-                        "uid": uid,
-                        "title": existing_row.title,
-                    }
+                    return {"success": True, "status": "already_existed", "already_existed": True, "uid": uid, "title": existing_row.title}
                 raise
 
-        # ── Step 2: Find frame from annotations ──
         if frame_index is not None:
             best = find_frame_by_index(scenario_id, frame_index)
         else:
             best = find_best_frame(scenario_id)
 
-        # ── Step 3: Find closest camera timestamp ──
-        camera_ts = find_closest_camera_timestamp(
-            scenario_id, best["timestamp_ns"]
-        )
-
-        # ── Step 4: Download image from S3 ──
+        camera_ts = find_closest_camera_timestamp(scenario_id, best["timestamp_ns"])
         image_bytes = download_camera_image(scenario_id, camera_ts)
-
-        # ── Step 5: Upload to Encord dataset ──
-        title = (
-            f"{scenario_prefix}"
-            f"_{best['n_agents']}agents"
-            f"_{best['n_pedestrians']}peds"
-        )
-        uid = upload_image_to_encord(dataset, image_bytes, title)
-
-        # ── Step 6: Create labeling task ──
+        title = f"{scenario_prefix}_{best['n_agents']}agents_{best['n_pedestrians']}peds"
+        uid = upload_image_to_encord(dataset_obj, image_bytes, title)
         try:
             project.create_label_row(uid=uid)
         except Exception as inner:
             if not _is_duplicate_error(inner):
                 raise
 
-        return {
-            "success": True,
-            "status": "uploaded_and_created",
-            "already_existed": False,
-            "uid": uid,
-            "title": title,
-            "best_frame": best,
-        }
+        return {"success": True, "status": "uploaded_and_created", "already_existed": False, "uid": uid, "title": title, "best_frame": best}
 
     except HTTPException:
         raise
@@ -428,6 +416,311 @@ def _is_duplicate_error(exc: Exception) -> bool:
     """Check if an Encord exception means the resource already exists."""
     msg = str(exc).lower()
     return any(kw in msg for kw in ("already", "exists", "duplicate", "conflict"))
+
+
+# ---------------------------------------------------------------------------
+# Shared 3D pipeline helpers
+# ---------------------------------------------------------------------------
+
+
+def quat_to_euler(qw, qx, qy, qz):
+    """Quaternion → Euler angles (roll, pitch, yaw)."""
+    sinr_cosp = 2 * (qw * qx + qy * qz)
+    cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinp = 2 * (qw * qy - qz * qx)
+    pitch = math.asin(max(-1, min(1, sinp)))
+    siny_cosp = 2 * (qw * qz + qx * qy)
+    cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    return roll, pitch, yaw
+
+
+def create_3stream_scene(client, title, ply_gcs_uri, cam_gcs_uri, cam_w, cam_h, cam_fx, cam_fy, cam_ox, cam_oy):
+    """Create a 3-stream Encord scene (lidar + camera_params + image) and link to dataset."""
+    scene_manifest = {
+        "scenes": [{
+            "title": title,
+            "scene": {
+                "lidar": {
+                    "type": "point_cloud",
+                    "events": [{"uri": ply_gcs_uri}],
+                },
+                "front_camera_params": {
+                    "type": "camera_parameters",
+                    "events": [{
+                        "timestamp": 1,
+                        "widthPx": cam_w,
+                        "heightPx": cam_h,
+                        "intrinsics": {
+                            "type": "simple",
+                            "fx": cam_fx, "fy": cam_fy,
+                            "ox": cam_ox, "oy": cam_oy,
+                        },
+                    }],
+                },
+                "front_camera": {
+                    "type": "image",
+                    "camera": "front_camera_params",
+                    "events": [{"uri": cam_gcs_uri}],
+                },
+            },
+        }],
+        "skipDuplicateUrls": True,
+    }
+    scene_json_path = tempfile.mktemp(suffix=".json")
+    with open(scene_json_path, "w") as f:
+        json.dump(scene_manifest, f)
+
+    folder = client.get_storage_folder(STORAGE_FOLDER_HASH)
+    integrations = client.get_cloud_integrations()
+    gcp_integration = next(
+        (i for i in integrations if any(kw in i.title.lower() for kw in ("gcp", "waymo", "rafael", "google"))),
+        None,
+    )
+    if not gcp_integration:
+        raise Exception("No GCP integration found in Encord")
+
+    job = folder.add_private_data_to_folder_start(gcp_integration.id, scene_json_path)
+    folder.add_private_data_to_folder_get_result(job)
+    os.unlink(scene_json_path)
+
+    # Link scene from storage folder to dataset
+    time.sleep(3)
+    dataset_obj = client.get_dataset(DATASET_HASH)
+    for item in folder.list_items():
+        if item.name == title:
+            dataset_obj.link_items(item_uuids=[str(item.uuid)])
+            print(f"[scene] Linked {title} to dataset")
+            break
+
+    # Wait for scene to appear in project, create label row
+    time.sleep(3)
+    project = client.get_project(PROJECT_HASH)
+    task_created = False
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == title:
+            try:
+                project.create_label_row(uid=lr.data_hash)
+                task_created = True
+            except Exception as e:
+                if _is_duplicate_error(e):
+                    task_created = True
+            break
+    return task_created
+
+
+def create_lidar_only_scene(client, title, ply_gcs_uri):
+    """Create a lidar-only Encord scene and link to dataset."""
+    scene_manifest = {
+        "scenes": [{
+            "title": title,
+            "scene": {
+                "lidar": {
+                    "type": "point_cloud",
+                    "events": [{"uri": ply_gcs_uri}],
+                },
+            },
+        }],
+        "skipDuplicateUrls": True,
+    }
+    scene_json_path = tempfile.mktemp(suffix=".json")
+    with open(scene_json_path, "w") as f:
+        json.dump(scene_manifest, f)
+
+    folder = client.get_storage_folder(STORAGE_FOLDER_HASH)
+    integrations = client.get_cloud_integrations()
+    gcp_integration = next(
+        (i for i in integrations if any(kw in i.title.lower() for kw in ("gcp", "waymo", "rafael", "google"))),
+        None,
+    )
+    if not gcp_integration:
+        raise Exception("No GCP integration found in Encord")
+
+    job = folder.add_private_data_to_folder_start(gcp_integration.id, scene_json_path)
+    folder.add_private_data_to_folder_get_result(job)
+    os.unlink(scene_json_path)
+
+    time.sleep(3)
+    dataset_obj = client.get_dataset(DATASET_HASH)
+    for item in folder.list_items():
+        if item.name == title:
+            dataset_obj.link_items(item_uuids=[str(item.uuid)])
+            print(f"[scene] Linked {title} to dataset")
+            break
+
+    time.sleep(3)
+    project = client.get_project(PROJECT_HASH)
+    task_created = False
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == title:
+            try:
+                project.create_label_row(uid=lr.data_hash)
+                task_created = True
+            except Exception as e:
+                if _is_duplicate_error(e):
+                    task_created = True
+            break
+    return task_created
+
+
+# ---------------------------------------------------------------------------
+# AV2 3D pipeline
+# ---------------------------------------------------------------------------
+
+
+def av2_lidar_to_ply(scenario_id: str, timestamp_ns: int) -> tuple[bytes, int]:
+    """Download AV2 LiDAR feather from S3, convert to PLY. Returns (ply_bytes, n_points)."""
+    import open3d as o3d
+
+    s3 = get_s3()
+    key = f"{AV2_PREFIX}/{scenario_id}/sensors/lidar/{timestamp_ns}.feather"
+    buf = io.BytesIO()
+    s3.download_fileobj(AV2_BUCKET, key, buf)
+    buf.seek(0)
+    lidar_df = feather.read_feather(buf)
+
+    points = lidar_df[["x", "y", "z"]].values.astype(np.float64)
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+
+    if "intensity" in lidar_df.columns:
+        intensity = lidar_df["intensity"].values.astype(np.float64)
+        norm = (intensity - intensity.min()) / (intensity.max() - intensity.min() + 1e-8)
+        colors = np.stack([norm, norm, norm], axis=1)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+    ply_path = tempfile.mktemp(suffix=".ply")
+    o3d.io.write_point_cloud(ply_path, pcd, write_ascii=True)
+    with open(ply_path, "rb") as f:
+        ply_bytes = f.read()
+    os.unlink(ply_path)
+    return ply_bytes, len(points)
+
+
+def write_av2_cuboid_predictions(client, project_hash, ontology_hash, scene_title, annotations_df, timestamp_ns):
+    """Write AV2 3D bounding boxes as Encord cuboid labels."""
+    from encord.objects.coordinates import CuboidCoordinates
+
+    frame_df = annotations_df[annotations_df["timestamp_ns"] == timestamp_ns]
+    if frame_df.empty:
+        return 0
+
+    ontology = client.get_ontology(ontology_hash)
+    project = client.get_project(project_hash)
+
+    target_row = None
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == scene_title:
+            target_row = lr
+            break
+    if not target_row:
+        return 0
+
+    target_row.initialise_labels()
+    n = 0
+    for _, box in frame_df.iterrows():
+        category = str(box.get("category", ""))
+        ont_name = AV2_CATEGORY_MAP.get(category)
+        if not ont_name:
+            continue
+        try:
+            ont_obj = ontology.structure.get_child_by_title(ont_name)
+        except Exception:
+            continue
+
+        roll, pitch, yaw = quat_to_euler(
+            float(box["qw"]), float(box["qx"]), float(box["qy"]), float(box["qz"])
+        )
+
+        instance = ont_obj.create_instance()
+        coords = CuboidCoordinates(
+            position=(float(box["tx"]), float(box["ty"]), float(box["tz"])),
+            orientation=(roll, pitch, yaw),
+            size=(float(box["length"]), float(box["width"]), float(box["height"])),
+        )
+        instance.set_for_frames(coords, frames=0, confidence=0.95, manual_annotation=False)
+        target_row.add_object_instance(instance)
+        n += 1
+
+    target_row.save()
+    return n
+
+
+def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: int | None = None) -> dict:
+    """Full AV2 3D pipeline: annotations → LiDAR PLY → camera → GCS → Encord scene → cuboid predictions."""
+    import traceback
+
+    client = get_encord()
+
+    # ── Step 1: Find target frame ──
+    if frame_index is not None:
+        best = find_frame_by_index(scenario_id, frame_index)
+    else:
+        best = find_best_frame(scenario_id)
+    timestamp_ns = best["timestamp_ns"]
+
+    fi_label = f"f{frame_index}" if frame_index is not None else "best"
+    title = f"{scenario_prefix}_{fi_label}_{best['n_agents']}ag"
+
+    # Check if already exists
+    project = client.get_project(PROJECT_HASH)
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == title:
+            return {
+                "success": True,
+                "status": "already_existed",
+                "already_existed": True,
+                "title": title,
+            }
+
+    # ── Step 2: Download LiDAR and convert to PLY ──
+    print(f"[av2-3d] Downloading LiDAR for ts={timestamp_ns}...")
+    ply_bytes, n_points = av2_lidar_to_ply(scenario_id, timestamp_ns)
+    print(f"[av2-3d] PLY: {n_points} points")
+
+    # ── Step 3: Upload PLY to GCS ──
+    ply_gcs_path = f"{AV2_3D_FOLDER}/{title}.ply"
+    ply_gcs_uri = upload_to_gcs(ply_bytes, ply_gcs_path)
+
+    # ── Step 4: Download camera image from S3 ──
+    camera_ts = find_closest_camera_timestamp(scenario_id, timestamp_ns)
+    image_bytes = download_camera_image(scenario_id, camera_ts)
+
+    # ── Step 5: Upload camera image to GCS ──
+    cam_gcs_path = f"{AV2_3D_FOLDER}/{title}_front.jpg"
+    cam_gcs_uri = upload_to_gcs(image_bytes, cam_gcs_path)
+
+    # ── Step 6: Create 3-stream Encord scene ──
+    print(f"[av2-3d] Creating 3-stream scene...")
+    task_created = create_3stream_scene(
+        client, title, ply_gcs_uri, cam_gcs_uri,
+        cam_w=1550, cam_h=2048, cam_fx=1000.0, cam_fy=1000.0, cam_ox=775.0, cam_oy=1024.0,
+    )
+
+    # ── Step 7: Write cuboid predictions ──
+    n_cuboids = 0
+    try:
+        annotations_df = download_annotations(scenario_id)
+        n_cuboids = write_av2_cuboid_predictions(
+            client, PROJECT_HASH, LIDAR_ONTOLOGY_HASH, title, annotations_df, timestamp_ns
+        )
+        print(f"[av2-3d] {n_cuboids} cuboids written")
+    except Exception as e:
+        print(f"[av2-3d] Cuboid writing failed: {e}")
+        traceback.print_exc()
+
+    return {
+        "success": True,
+        "status": "uploaded_and_created",
+        "already_existed": False,
+        "title": title,
+        "n_points": n_points,
+        "n_cuboids": n_cuboids,
+        "task_created": task_created,
+        "best_frame": best,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -667,64 +960,41 @@ def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=None):
 
         # Upload PLY to GCS
         ply_gcs_path = f"{GCS_LIDAR_FOLDER}/{scene_title}.ply"
-        print(f"[waymo] Uploading to GCS...")
-        gcs_uri = upload_to_gcs(ply_bytes, ply_gcs_path)
+        print(f"[waymo] Uploading PLY to GCS...")
+        ply_gcs_uri = upload_to_gcs(ply_bytes, ply_gcs_path)
 
-        # Create Encord scene — matches the working AV2 lidar.events format
-        scene_manifest = {
-            "scenes": [{
-                "title": scene_title,
-                "scene": {
-                    "lidar": {
-                        "type": "point_cloud",
-                        "events": [{"uri": gcs_uri}],
-                    },
-                },
-            }],
-            "skipDuplicateUrls": True,
-        }
-        scene_json_path = tempfile.mktemp(suffix=".json")
-        with open(scene_json_path, "w") as f:
-            json.dump(scene_manifest, f)
+        # Try to download and upload camera image
+        cam_gcs_uri = None
+        try:
+            print(f"[waymo] Downloading camera_image parquet...")
+            cam_resp = http_requests.get(f"{WAYMO_GCS_BASE}/camera_image/{scenario_id}.parquet", timeout=120)
+            cam_resp.raise_for_status()
+            cam_df = pq.read_table(io.BytesIO(cam_resp.content)).to_pandas()
+            # Front camera = camera_name 1
+            front_frame = cam_df[
+                (cam_df["key.frame_timestamp_micros"] == frame_ts) &
+                (cam_df["key.camera_name"] == 1)
+            ]
+            if not front_frame.empty:
+                jpeg_bytes = bytes(front_frame.iloc[0]["[CameraImageComponent].image"])
+                cam_gcs_path = f"{GCS_LIDAR_FOLDER}/{scene_title}_front.jpg"
+                cam_gcs_uri = upload_to_gcs(jpeg_bytes, cam_gcs_path)
+                print(f"[waymo] Camera image uploaded ({len(jpeg_bytes)} bytes)")
+            else:
+                print(f"[waymo] No front camera image for ts={frame_ts}")
+        except Exception as cam_err:
+            print(f"[waymo] Camera download failed (falling back to lidar-only): {cam_err}")
 
-        folder = client.get_storage_folder(STORAGE_FOLDER_HASH)
-        integrations = client.get_cloud_integrations()
-        gcp_integration = next(
-            (i for i in integrations if any(kw in i.title.lower() for kw in ("gcp", "waymo", "rafael", "google"))),
-            None,
-        )
-        if not gcp_integration:
-            raise Exception("No GCP integration found in Encord")
-
-        print(f"[waymo] Creating Encord scene...")
-        job = folder.add_private_data_to_folder_start(gcp_integration.id, scene_json_path)
-        folder.add_private_data_to_folder_get_result(job)
-        os.unlink(scene_json_path)
-
-        # Link scene from storage folder to dataset
-        time.sleep(3)
-        dataset_obj = client.get_dataset(DATASET_HASH)
-        items = folder.list_items()
-        for item in items:
-            if item.name == scene_title:
-                dataset_obj.link_items(item_uuids=[str(item.uuid)])
-                print(f"[waymo] Linked {scene_title} to dataset")
-                break
-
-        # Wait for scene to appear in project
-        import time as _time
-        _time.sleep(3)
-
-        task_created = False
-        for lr in project.list_label_rows_v2():
-            if lr.data_title == scene_title:
-                try:
-                    project.create_label_row(uid=lr.data_hash)
-                    task_created = True
-                except Exception as e:
-                    if _is_duplicate_error(e):
-                        task_created = True
-                break
+        # Create Encord scene — 3-stream if camera available, lidar-only otherwise
+        if cam_gcs_uri:
+            print(f"[waymo] Creating 3-stream Encord scene...")
+            task_created = create_3stream_scene(
+                client, scene_title, ply_gcs_uri, cam_gcs_uri,
+                cam_w=1920, cam_h=1280, cam_fx=2000.0, cam_fy=2000.0, cam_ox=960.0, cam_oy=640.0,
+            )
+        else:
+            print(f"[waymo] Creating lidar-only Encord scene...")
+            task_created = create_lidar_only_scene(client, scene_title, ply_gcs_uri)
 
         # Write cuboid predictions
         n_cuboids = 0
