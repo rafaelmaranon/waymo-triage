@@ -174,6 +174,30 @@ def find_best_frame(scenario_id: str) -> dict:
     }
 
 
+def find_frame_by_index(scenario_id: str, frame_index: int) -> dict:
+    """
+    Get annotation stats for a specific frame index (0-based).
+    Returns same shape as find_best_frame().
+    """
+    df = download_annotations(scenario_id)
+    timestamps = sorted(df["timestamp_ns"].unique())
+    idx = max(0, min(frame_index, len(timestamps) - 1))
+    ts = timestamps[idx]
+
+    frame_df = df[df["timestamp_ns"] == ts]
+    n_agents = len(frame_df)
+    n_peds = int((frame_df["category"] == "PEDESTRIAN").sum()) if "category" in frame_df.columns else 0
+    CYCLIST_CATEGORIES = {"BICYCLIST", "BICYCLE", "WHEELED_RIDER", "MOTORCYCLIST"}
+    n_cyc = int(frame_df["category"].isin(CYCLIST_CATEGORIES).sum()) if "category" in frame_df.columns else 0
+
+    return {
+        "timestamp_ns": int(ts),
+        "n_agents": n_agents,
+        "n_pedestrians": n_peds,
+        "n_cyclists": n_cyc,
+    }
+
+
 def find_closest_camera_timestamp(scenario_id: str, target_ts: int) -> int:
     """
     List camera image timestamps from S3 and find closest to target_ts.
@@ -287,6 +311,7 @@ app.add_middleware(
 class SendRequest(BaseModel):
     scenario_id: str
     dataset: str = "argoverse2"
+    frame_index: int | None = None
 
 
 @app.get("/api/encord/health")
@@ -314,17 +339,17 @@ async def send_to_encord(req: SendRequest):
     lock = get_lock(scenario_id)
     async with lock:
         result = await asyncio.to_thread(
-            _send_to_encord_sync, scenario_id, scenario_prefix, dataset
+            _send_to_encord_sync, scenario_id, scenario_prefix, dataset, req.frame_index
         )
         return result
 
 
-def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = "argoverse2") -> dict:
+def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = "argoverse2", frame_index: int | None = None) -> dict:
     """Synchronous implementation — runs in thread pool."""
     try:
         if dataset in ("waymo_v2", "waymo_perception"):
             scenario_prefix = f"waymo_{scenario_id[:8]}"
-            return _send_waymo_lidar_to_encord(scenario_id, scenario_prefix)
+            return _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
         client = get_encord()
         dataset = client.get_dataset(DATASET_HASH)
         project = client.get_project(PROJECT_HASH)
@@ -354,8 +379,11 @@ def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = 
                     }
                 raise
 
-        # ── Step 2: Find best frame from annotations ──
-        best = find_best_frame(scenario_id)
+        # ── Step 2: Find frame from annotations ──
+        if frame_index is not None:
+            best = find_frame_by_index(scenario_id, frame_index)
+        else:
+            best = find_best_frame(scenario_id)
 
         # ── Step 3: Find closest camera timestamp ──
         camera_ts = find_closest_camera_timestamp(
@@ -599,7 +627,7 @@ def write_waymo_cuboid_predictions(client, project_hash, ontology_hash, scene_ti
     return n
 
 
-def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix):
+def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=None):
     """Full Waymo LiDAR pipeline: parquet → PLY → GCS → Encord scene → cuboid predictions."""
     import traceback
 
@@ -634,7 +662,7 @@ def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix):
 
         # Convert to PLY
         print(f"[waymo] Converting to PLY...")
-        ply_bytes, frame_ts, n_points = waymo_parquet_to_ply(lidar_resp.content, calib_resp.content)
+        ply_bytes, frame_ts, n_points = waymo_parquet_to_ply(lidar_resp.content, calib_resp.content, frame_index=frame_index)
         print(f"[waymo] PLY: {n_points} points")
 
         # Upload PLY to GCS

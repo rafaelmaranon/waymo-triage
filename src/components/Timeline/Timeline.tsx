@@ -5,8 +5,9 @@
  * a gradient progress bar for the current position, and a draggable scrubber.
  */
 
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
 import { useSceneStore } from '../../stores/useSceneStore'
+import scenarioIndex from '../../data/scenario_index.json'
 import { colors, fonts, radius, gradients } from '../../theme'
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,8 @@ export function computeBufferSegments(cachedFrames: number[], totalFrames: numbe
 // Component
 // ---------------------------------------------------------------------------
 
+const ENCORD_PURPLE = '#5B50D6'
+
 export default function Timeline({ minimal = false }: { minimal?: boolean } = {}) {
   const status = useSceneStore((s) => s.status)
   const currentFrameIndex = useSceneStore((s) => s.currentFrameIndex)
@@ -53,6 +56,42 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
   const cachedFrames = useSceneStore((s) => s.cachedFrames)
   const cameraCachedFrames = useSceneStore((s) => s.cameraCachedFrames)
   const actions = useSceneStore((s) => s.actions)
+  const currentSegment = useSceneStore((s) => s.currentSegment)
+
+  // Send-to-Encord state
+  const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  // Auto-clear sent/error status after 2s
+  useEffect(() => {
+    if (sendStatus === 'sent' || sendStatus === 'error') {
+      const t = setTimeout(() => setSendStatus('idle'), 2000)
+      return () => clearTimeout(t)
+    }
+  }, [sendStatus])
+
+  const handleSendFrame = useCallback(async () => {
+    if (!currentSegment || sendStatus === 'sending') return
+    const scenario = (scenarioIndex as { id: string; dataset: string }[]).find(s => s.id === currentSegment)
+    const dataset = scenario?.dataset ?? 'argoverse2'
+    setSendStatus('sending')
+    try {
+      const res = await fetch('/api/encord/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario_id: currentSegment,
+          dataset,
+          frame_index: currentFrameIndex,
+        }),
+      })
+      if (!res.ok) throw new Error('Send failed')
+      const data = await res.json() as { success: boolean }
+      if (!data.success) throw new Error('Unexpected response')
+      setSendStatus('sent')
+    } catch {
+      setSendStatus('error')
+    }
+  }, [currentSegment, currentFrameIndex, sendStatus])
 
   // Annotation frame markers
   const colormapMode = useSceneStore((s) => s.colormapMode)
@@ -312,6 +351,48 @@ export default function Timeline({ minimal = false }: { minimal?: boolean } = {}
       }}>
         {currentFrameIndex + 1} / {totalFrames}
       </span>
+
+      {/* Send Frame to Encord */}
+      {!minimal && currentSegment && (
+        <button
+          onClick={handleSendFrame}
+          disabled={disabled || sendStatus === 'sending'}
+          title="Send current frame to Encord for labeling"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '3px 10px',
+            fontSize: '10px',
+            fontFamily: fonts.sans,
+            fontWeight: 600,
+            color: sendStatus === 'sent' ? '#059669'
+              : sendStatus === 'error' ? colors.error
+              : '#FFFFFF',
+            backgroundColor: sendStatus === 'sent' ? 'rgba(5, 150, 105, 0.1)'
+              : sendStatus === 'error' ? 'rgba(239, 68, 68, 0.1)'
+              : sendStatus === 'sending' ? `${ENCORD_PURPLE}99`
+              : ENCORD_PURPLE,
+            border: `1px solid ${
+              sendStatus === 'sent' ? 'rgba(5, 150, 105, 0.3)'
+              : sendStatus === 'error' ? 'rgba(239, 68, 68, 0.3)'
+              : ENCORD_PURPLE
+            }`,
+            borderRadius: radius.sm,
+            cursor: (disabled || sendStatus === 'sending') ? 'default' : 'pointer',
+            opacity: disabled ? 0.4 : 1,
+            lineHeight: '16px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s',
+            flexShrink: 0,
+          }}
+        >
+          {sendStatus === 'sending' ? 'Sending...'
+            : sendStatus === 'sent' ? '\u2713 Sent!'
+            : sendStatus === 'error' ? 'Failed'
+            : 'Send Frame'}
+        </button>
+      )}
     </div>
   )
 }
