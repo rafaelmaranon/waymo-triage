@@ -441,38 +441,94 @@ def quat_to_euler(qw, qx, qy, qz):
     return roll, pitch, yaw
 
 
-def create_3stream_scene(client, title, ply_gcs_uri, cam_gcs_uri, cam_w, cam_h, cam_fx, cam_fy, cam_ox, cam_oy):
-    """Create a 3-stream Encord scene (lidar + camera_params + image) and link to dataset."""
+def create_docs_format_scene(client, title, ply_gcs_uri, cam_gcs_uri=None,
+                             cam_w=1920, cam_h=1200, cam_fx=1000.0, cam_fy=1000.0):
+    """Create an Encord scene using the docs-compliant manifest format and link to dataset.
+    If cam_gcs_uri is None, creates a lidar-only scene."""
+    cam_ox = cam_w / 2.0
+    cam_oy = cam_h / 2.0
+
+    content = {
+        "ego_vehicle": {
+            "type": "frame_of_reference",
+            "id": "ego_vehicle",
+            "parentForId": None,
+            "events": [{
+                "timestamp": 0.0,
+                "pose": {
+                    "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                },
+            }],
+        },
+        "LIDAR_TOP_calibration": {
+            "type": "frame_of_reference",
+            "id": "LIDAR_TOP_calibration",
+            "parentForId": "ego_vehicle",
+            "events": [{
+                "timestamp": 0.0,
+                "pose": {
+                    "position": {"x": 0.0, "y": 0.0, "z": 1.84},
+                    "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                },
+            }],
+        },
+        "LIDAR_TOP": {
+            "type": "point_cloud",
+            "frameOfReference": "LIDAR_TOP_calibration",
+            "events": [{"uri": ply_gcs_uri, "timestamp": 0.0}],
+        },
+    }
+
+    if cam_gcs_uri:
+        content["CAM_FRONT_calibration"] = {
+            "type": "frame_of_reference",
+            "id": "CAM_FRONT_calibration",
+            "parentForId": "ego_vehicle",
+            "events": [{
+                "timestamp": 0.0,
+                "pose": {
+                    "position": {"x": 1.7, "y": 0.0, "z": 1.5},
+                    "rotation": {"x": 0.5, "y": -0.5, "z": 0.5, "w": 0.5},
+                },
+            }],
+        }
+        content["CAM_FRONT_camera"] = {
+            "type": "camera_parameters",
+            "frameOfReference": "CAM_FRONT_calibration",
+            "events": [{
+                "timestamp": 0.0,
+                "widthPx": cam_w,
+                "heightPx": cam_h,
+                "intrinsics": {
+                    "type": "simple",
+                    "fx": cam_fx, "fy": cam_fy,
+                    "ox": cam_ox, "oy": cam_oy,
+                },
+                "extrinsics": {
+                    "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "rotation": {"x": 0.5, "y": -0.5, "z": 0.5, "w": -0.5},
+                },
+            }],
+        }
+        content["CAM_FRONT"] = {
+            "type": "image",
+            "camera": "CAM_FRONT_camera",
+            "events": [{"uri": cam_gcs_uri, "timestamp": 0.0}],
+        }
+
     scene_manifest = {
         "scenes": [{
             "title": title,
             "scene": {
-                "lidar": {
-                    "type": "point_cloud",
-                    "events": [{"uri": ply_gcs_uri}],
-                },
-                "front_camera_params": {
-                    "type": "camera_parameters",
-                    "events": [{
-                        "timestamp": 1,
-                        "widthPx": cam_w,
-                        "heightPx": cam_h,
-                        "intrinsics": {
-                            "type": "simple",
-                            "fx": cam_fx, "fy": cam_fy,
-                            "ox": cam_ox, "oy": cam_oy,
-                        },
-                    }],
-                },
-                "front_camera": {
-                    "type": "image",
-                    "camera": "front_camera_params",
-                    "events": [{"uri": cam_gcs_uri}],
-                },
+                "worldConvention": {"x": "right", "y": "forward", "z": "up"},
+                "cameraConvention": {"x": "right", "y": "down", "z": "forward"},
+                "content": content,
             },
         }],
         "skipDuplicateUrls": True,
     }
+
     scene_json_path = tempfile.mktemp(suffix=".json")
     with open(scene_json_path, "w") as f:
         json.dump(scene_manifest, f)
@@ -500,60 +556,6 @@ def create_3stream_scene(client, title, ply_gcs_uri, cam_gcs_uri, cam_w, cam_h, 
             break
 
     # Wait for scene to appear in project, create label row
-    time.sleep(3)
-    project = client.get_project(PROJECT_HASH)
-    task_created = False
-    for lr in project.list_label_rows_v2():
-        if lr.data_title == title:
-            try:
-                project.create_label_row(uid=lr.data_hash)
-                task_created = True
-            except Exception as e:
-                if _is_duplicate_error(e):
-                    task_created = True
-            break
-    return task_created
-
-
-def create_lidar_only_scene(client, title, ply_gcs_uri):
-    """Create a lidar-only Encord scene and link to dataset."""
-    scene_manifest = {
-        "scenes": [{
-            "title": title,
-            "scene": {
-                "lidar": {
-                    "type": "point_cloud",
-                    "events": [{"uri": ply_gcs_uri}],
-                },
-            },
-        }],
-        "skipDuplicateUrls": True,
-    }
-    scene_json_path = tempfile.mktemp(suffix=".json")
-    with open(scene_json_path, "w") as f:
-        json.dump(scene_manifest, f)
-
-    folder = client.get_storage_folder(STORAGE_FOLDER_HASH)
-    integrations = client.get_cloud_integrations()
-    gcp_integration = next(
-        (i for i in integrations if any(kw in i.title.lower() for kw in ("gcp", "waymo", "rafael", "google"))),
-        None,
-    )
-    if not gcp_integration:
-        raise Exception("No GCP integration found in Encord")
-
-    job = folder.add_private_data_to_folder_start(gcp_integration.id, scene_json_path)
-    folder.add_private_data_to_folder_get_result(job)
-    os.unlink(scene_json_path)
-
-    time.sleep(3)
-    dataset_obj = client.get_dataset(DATASET_HASH)
-    for item in folder.list_items():
-        if item.name == title:
-            dataset_obj.link_items(item_uuids=[str(item.uuid)])
-            print(f"[scene] Linked {title} to dataset")
-            break
-
     time.sleep(3)
     project = client.get_project(PROJECT_HASH)
     task_created = False
@@ -697,11 +699,11 @@ def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: 
     cam_gcs_path = f"{AV2_3D_FOLDER}/{title}_front.jpg"
     cam_gcs_uri = upload_to_gcs(image_bytes, cam_gcs_path)
 
-    # ── Step 6: Create 3-stream Encord scene ──
-    print(f"[av2-3d] Creating 3-stream scene...")
-    task_created = create_3stream_scene(
+    # ── Step 6: Create Encord scene ──
+    print(f"[av2-3d] Creating scene...")
+    task_created = create_docs_format_scene(
         client, title, ply_gcs_uri, cam_gcs_uri,
-        cam_w=1550, cam_h=2048, cam_fx=1000.0, cam_fy=1000.0, cam_ox=775.0, cam_oy=1024.0,
+        cam_w=1920, cam_h=1200, cam_fx=1000.0, cam_fy=1000.0,
     )
 
     # ── Step 7: Write cuboid predictions ──
@@ -973,11 +975,11 @@ def _send_nuscenes_3d(scenario_id: str, scenario_prefix: str, frame_index: int |
                     cam_oy = intrinsic[1][2]
                 break
 
-    # ── Step 6: Create 3-stream Encord scene ──
-    print(f"[nuscenes] Creating 3-stream scene...")
-    task_created = create_3stream_scene(
+    # ── Step 6: Create Encord scene ──
+    print(f"[nuscenes] Creating scene...")
+    task_created = create_docs_format_scene(
         client, title, ply_gcs_uri, cam_gcs_uri,
-        cam_w=cam_w, cam_h=cam_h, cam_fx=cam_fx, cam_fy=cam_fy, cam_ox=cam_ox, cam_oy=cam_oy,
+        cam_w=cam_w, cam_h=cam_h, cam_fx=cam_fx, cam_fy=cam_fy,
     )
 
     # ── Step 7: Write cuboid predictions ──
@@ -1334,16 +1336,12 @@ def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=None):
         except Exception as cam_err:
             print(f"[waymo] Camera download failed (falling back to lidar-only): {cam_err}")
 
-        # Create Encord scene — 3-stream if camera available, lidar-only otherwise
-        if cam_gcs_uri:
-            print(f"[waymo] Creating 3-stream Encord scene...")
-            task_created = create_3stream_scene(
-                client, scene_title, ply_gcs_uri, cam_gcs_uri,
-                cam_w=1920, cam_h=1280, cam_fx=2000.0, cam_fy=2000.0, cam_ox=960.0, cam_oy=640.0,
-            )
-        else:
-            print(f"[waymo] Creating lidar-only Encord scene...")
-            task_created = create_lidar_only_scene(client, scene_title, ply_gcs_uri)
+        # Create Encord scene — with camera if available, lidar-only otherwise
+        print(f"[waymo] Creating Encord scene...")
+        task_created = create_docs_format_scene(
+            client, scene_title, ply_gcs_uri, cam_gcs_uri,
+            cam_w=1920, cam_h=1280, cam_fx=2000.0, cam_fy=2000.0,
+        )
 
         # Write cuboid predictions
         n_cuboids = 0
