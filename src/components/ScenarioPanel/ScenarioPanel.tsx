@@ -41,18 +41,14 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const DATASET_SOURCE_LABEL: Record<string, string> = {
-  nuscenes_mini:     'nuScenes',
-  nuscenes_full:     'nuScenes',
   argoverse2:        'AV2',
   waymo_perception:  'Waymo',
   waymo_v2:          'Waymo v2',
 };
 const DATASET_SOURCE_COLOR: Record<string, string> = {
-  nuscenes_mini:     '#3B82F6',
   argoverse2:        '#D97706',
   waymo_perception:  '#92805A',
   waymo_v2:          '#92805A',
-  nuscenes_full:     '#3B82F6',
 };
 
 function normScore(s: Scenario) { return Math.min(s.quality_score, 10); }
@@ -775,7 +771,7 @@ export function ScenarioPanel() {
       return;
     }
 
-    if (s.dataset === 'nuscenes_mini' || s.dataset === 'argoverse2') {
+    if (s.dataset === 'argoverse2') {
       if (loadingId) return;
       if (currentSegment === s.id) return;
       if (availableSegments.includes(s.id)) {
@@ -784,11 +780,7 @@ export function ScenarioPanel() {
       }
       setLoadingId(s.id);
       try {
-        if (s.dataset === 'nuscenes_mini') {
-          await loadFromUrl('nuscenes', s.base_url, s.id);
-        } else {
-          await loadFromUrl('argoverse2', s.base_url);
-        }
+        await loadFromUrl('argoverse2', s.base_url);
       } finally {
         setLoadingId(null);
       }

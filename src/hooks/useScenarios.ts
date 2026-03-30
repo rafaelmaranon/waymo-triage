@@ -75,8 +75,6 @@ export function useScenarios(typeFilter: string, searchQuery?: string): Scenario
 
 /** Group key → ordered list of dataset values that belong to it */
 export const DATASET_GROUPS: { key: string; label: string; datasets: string[]; lockTooltip?: string }[] = [
-  { key: 'nuscenes_mini', label: 'nuScenes mini',  datasets: ['nuscenes_mini'] },
   { key: 'argoverse2',    label: 'Argoverse 2',    datasets: ['argoverse2'] },
   { key: 'waymo',         label: 'Waymo',          datasets: ['waymo_perception', 'waymo_v2'], lockTooltip: 'Provide Google Cloud credentials to unlock' },
-  { key: 'nuscenes_full', label: 'nuScenes full',  datasets: ['nuscenes_full'], lockTooltip: 'Provide nuScenes credentials to unlock' },
 ];
