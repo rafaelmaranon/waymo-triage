@@ -700,8 +700,6 @@ def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: 
     cam_gcs_uri = upload_to_gcs(image_bytes, cam_gcs_path)
 
     # ── Step 6: Create Encord scene ──
-    print(f"[av2-3d] Waiting 10s for GCS propagation...")
-    time.sleep(10)
     print(f"[av2-3d] Creating scene...")
     task_created = create_docs_format_scene(
         client, title, ply_gcs_uri, cam_gcs_uri,
@@ -978,8 +976,6 @@ def _send_nuscenes_3d(scenario_id: str, scenario_prefix: str, frame_index: int |
                 break
 
     # ── Step 6: Create Encord scene ──
-    print(f"[nuscenes] Waiting 10s for GCS propagation...")
-    time.sleep(10)
     print(f"[nuscenes] Creating scene...")
     task_created = create_docs_format_scene(
         client, title, ply_gcs_uri, cam_gcs_uri,
@@ -1341,8 +1337,6 @@ def _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=None):
             print(f"[waymo] Camera download failed (falling back to lidar-only): {cam_err}")
 
         # Create Encord scene — with camera if available, lidar-only otherwise
-        print(f"[waymo] Waiting 10s for GCS propagation...")
-        time.sleep(10)
         print(f"[waymo] Creating Encord scene...")
         task_created = create_docs_format_scene(
             client, scene_title, ply_gcs_uri, cam_gcs_uri,
