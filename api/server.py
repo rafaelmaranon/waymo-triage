@@ -347,6 +347,8 @@ async def send_to_encord(req: SendRequest):
 
     if dataset in ("waymo_v2", "waymo_perception"):
         scenario_prefix = f"waymo_{scenario_id[:8]}"
+    elif dataset == "nuscenes_mini":
+        scenario_prefix = f"ns_{scenario_id[:8]}"
     else:
         scenario_prefix = f"av2_{scenario_id[:8]}"
 
@@ -365,6 +367,9 @@ def _send_to_encord_sync(scenario_id: str, scenario_prefix: str, dataset: str = 
         if dataset in ("waymo_v2", "waymo_perception"):
             scenario_prefix = f"waymo_{scenario_id[:8]}"
             return _send_waymo_lidar_to_encord(scenario_id, scenario_prefix, frame_index=frame_index)
+
+        if dataset == "nuscenes_mini":
+            return _send_nuscenes_to_encord(scenario_id, scenario_prefix)
 
         # ── AV2: try full 3D pipeline, fall back to image-only ──
         try:
@@ -720,6 +725,68 @@ def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: 
         "n_cuboids": n_cuboids,
         "task_created": task_created,
         "best_frame": best,
+    }
+
+
+# ---------------------------------------------------------------------------
+# nuScenes → Encord pipeline (image-only for now)
+# ---------------------------------------------------------------------------
+
+
+def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str) -> dict:
+    """nuScenes image-only send: download front camera from egolens.org, upload to Encord."""
+    import traceback
+
+    client = get_encord()
+    dataset_obj = client.get_dataset(DATASET_HASH)
+    project = client.get_project(PROJECT_HASH)
+
+    # Check if already exists
+    existing_row = find_existing_data_row(dataset_obj, scenario_prefix)
+    if existing_row:
+        uid = existing_row.uid
+        try:
+            project.create_label_row(uid=uid)
+            return {"success": True, "status": "task_created", "already_existed": False, "uid": uid, "title": existing_row.title}
+        except Exception as inner:
+            if _is_duplicate_error(inner):
+                return {"success": True, "status": "already_existed", "already_existed": True, "uid": uid, "title": existing_row.title}
+            raise
+
+    # Find the scenario in scenario_index to get img_url
+    import json as _json
+    index_path = pathlib.Path(__file__).parent.parent / "src" / "data" / "scenario_index.json"
+    img_url = None
+    if index_path.exists():
+        with open(index_path) as f:
+            for entry in _json.load(f):
+                if entry.get("id") == scenario_id and entry.get("dataset") == "nuscenes_mini":
+                    img_url = entry.get("img_url")
+                    break
+
+    if not img_url:
+        raise HTTPException(status_code=400, detail=f"No image URL found for nuScenes scenario {scenario_id}")
+
+    print(f"[nuscenes] Downloading front camera from {img_url}...")
+    resp = http_requests.get(img_url, timeout=30)
+    resp.raise_for_status()
+    image_bytes = resp.content
+
+    title = f"{scenario_prefix}_{scenario_id}"
+    uid = upload_image_to_encord(dataset_obj, image_bytes, title)
+
+    try:
+        project.create_label_row(uid=uid)
+    except Exception as inner:
+        if not _is_duplicate_error(inner):
+            raise
+
+    return {
+        "success": True,
+        "status": "uploaded_and_created",
+        "already_existed": False,
+        "uid": uid,
+        "title": title,
     }
 
 
