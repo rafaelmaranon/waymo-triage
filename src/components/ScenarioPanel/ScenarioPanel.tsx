@@ -78,9 +78,45 @@ function ScenarioThumbnail({ scenario }: { scenario: Scenario }) {
   const tc = TYPE_COLORS[scenario.type] ?? DEFAULT_TYPE_COLOR;
   const isWaymo = WAYMO_DATASETS.has(scenario.dataset);
   const isWaymoLocked = isWaymo && !scenario.base_url;
-  // Waymo cards with base_url: skip thumbnail area entirely, let card content show
+  // Waymo V2 cards with base_url: styled dark card
   if (isWaymo && scenario.base_url && (url === null || !url || failed)) {
-    return null;
+    return (
+      <div style={{
+        width: '100%', height: 120, flexShrink: 0,
+        background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 16px',
+        borderBottom: `1px solid rgba(255,255,255,0.06)`,
+        position: 'relative',
+        overflow: 'hidden',
+      }}>
+        {/* Subtle dot pattern */}
+        <div style={{
+          position: 'absolute', inset: 0, opacity: 0.04,
+          backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)',
+          backgroundSize: '12px 12px',
+          pointerEvents: 'none',
+        }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, zIndex: 1 }}>
+          <span style={{ fontSize: 9, fontFamily: fonts.mono, fontWeight: 700, color: '#92805A', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+            WAYMO V2
+          </span>
+          <span style={{ fontSize: 11, fontFamily: fonts.sans, color: 'rgba(255,255,255,0.7)', fontWeight: 500, lineHeight: '1.3', maxWidth: 140 }}>
+            {scenario.location || formatType(scenario.type)}
+          </span>
+        </div>
+        {scenario.max_peds_nearby > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, zIndex: 1 }}>
+            <span style={{ fontSize: 32, fontFamily: fonts.mono, fontWeight: 800, color: '#FFFFFF', lineHeight: 1, letterSpacing: '-0.02em' }}>
+              {scenario.max_peds_nearby}
+            </span>
+            <span style={{ fontSize: 8, fontFamily: fonts.sans, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              pedestrians
+            </span>
+          </div>
+        )}
+      </div>
+    );
   }
 
   if (url === null || failed) {

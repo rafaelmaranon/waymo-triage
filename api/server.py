@@ -729,8 +729,32 @@ def _send_av2_3d_to_encord(scenario_id: str, scenario_prefix: str, frame_index: 
 
 
 # ---------------------------------------------------------------------------
-# nuScenes → Encord pipeline (image-only for now)
+# nuScenes → Encord pipeline (full 3D)
 # ---------------------------------------------------------------------------
+
+NUSCENES_3D_FOLDER = "nuscenes_3d_pipeline"
+NUSCENES_ENCORD_CATEGORY_MAP = {
+    "vehicle.car": "Regular Vehicle",
+    "vehicle.truck": "Truck",
+    "vehicle.bus.bendy": "Bus",
+    "vehicle.bus.rigid": "Bus",
+    "vehicle.construction": "Regular Vehicle",
+    "vehicle.emergency.ambulance": "Regular Vehicle",
+    "vehicle.emergency.police": "Regular Vehicle",
+    "vehicle.trailer": "Truck",
+    "human.pedestrian.adult": "Pedestrian",
+    "human.pedestrian.child": "Pedestrian",
+    "human.pedestrian.construction_worker": "Pedestrian",
+    "human.pedestrian.personal_mobility": "Pedestrian",
+    "human.pedestrian.police_officer": "Pedestrian",
+    "human.pedestrian.stroller": "Pedestrian",
+    "human.pedestrian.wheelchair": "Pedestrian",
+    "vehicle.motorcycle": "Motorcyclist",
+    "vehicle.bicycle": "Bicycle",
+    "movable_object.barrier": "Bollard",
+    "movable_object.trafficcone": "Construction Cone",
+    "static_object.bicycle_rack": "Bicycle",
+}
 
 
 def _resolve_nuscenes_base_url(scenario_id: str) -> str:
@@ -744,13 +768,20 @@ def _resolve_nuscenes_base_url(scenario_id: str) -> str:
     return ""
 
 
-def _fetch_nuscenes_front_image(base_url: str, scene_token: str, frame_index: int | None) -> tuple[bytes, str]:
-    """
-    Fetch the CAM_FRONT image for a specific frame of a nuScenes scene.
-    Downloads metadata JSONs, walks the sample linked list, finds the right frame.
-    Returns (jpeg_bytes, filename).
-    """
-    # Detect split by probing
+def _nuscenes_quat_to_matrix(rotation, translation):
+    """Convert nuScenes quaternion [w,x,y,z] + translation to 4x4 matrix."""
+    w, x, y, z = rotation
+    tx, ty, tz = translation
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w), tx],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w), ty],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y), tz],
+        [0, 0, 0, 1],
+    ])
+
+
+def _load_nuscenes_metadata(base_url: str):
+    """Download and parse nuScenes metadata JSONs. Returns (meta_dict, detected_split)."""
     detected_split = None
     for split in ("v1.0-mini", "v1.0-trainval", "v1.0-test"):
         try:
@@ -764,30 +795,28 @@ def _fetch_nuscenes_front_image(base_url: str, scene_token: str, frame_index: in
         raise Exception("Could not detect nuScenes split")
 
     meta_base = f"{base_url}{detected_split}/"
+    meta = {}
+    for name in ("scene", "sample", "sample_data", "sample_annotation",
+                 "ego_pose", "calibrated_sensor", "sensor", "instance", "category"):
+        print(f"[nuscenes] Fetching {name}.json...")
+        resp = http_requests.get(f"{meta_base}{name}.json", timeout=60)
+        resp.raise_for_status()
+        meta[name] = resp.json()
 
-    # Fetch required metadata
-    scenes = http_requests.get(f"{meta_base}scene.json", timeout=30).json()
-    samples = http_requests.get(f"{meta_base}sample.json", timeout=30).json()
-    sample_data_list = http_requests.get(f"{meta_base}sample_data.json", timeout=60).json()
+    return meta, detected_split
 
-    # Build lookup maps
-    sample_by_token = {s["token"]: s for s in samples}
-    # sample_data grouped by sample_token, filtered to keyframes
-    sd_by_sample: dict[str, list] = {}
-    for sd in sample_data_list:
-        if sd.get("is_key_frame", False):
-            sd_by_sample.setdefault(sd["sample_token"], []).append(sd)
 
-    # Find our scene
+def _nuscenes_resolve_frame(meta, scenario_id, frame_index):
+    """Find target scene and walk to the frame. Returns (target_sample, ordered_samples, scene)."""
+    sample_by_token = {s["token"]: s for s in meta["sample"]}
     scene = None
-    for sc in scenes:
-        if sc.get("name") == scene_token or sc.get("token") == scene_token:
+    for sc in meta["scene"]:
+        if sc.get("name") == scenario_id or sc.get("token") == scenario_id:
             scene = sc
             break
     if not scene:
-        raise Exception(f"Scene '{scene_token}' not found in {detected_split}")
+        raise Exception(f"Scene '{scenario_id}' not found")
 
-    # Walk sample linked list to build ordered frames
     ordered_samples = []
     cur = scene.get("first_sample_token")
     while cur and cur in sample_by_token:
@@ -795,44 +824,47 @@ def _fetch_nuscenes_front_image(base_url: str, scene_token: str, frame_index: in
         cur = sample_by_token[cur].get("next", "")
 
     if not ordered_samples:
-        raise Exception(f"No samples found for scene '{scene_token}'")
+        raise Exception(f"No samples found for scene '{scenario_id}'")
 
-    # Pick frame
     fi = frame_index if frame_index is not None else 0
     fi = max(0, min(fi, len(ordered_samples) - 1))
-    target_sample = ordered_samples[fi]
+    return ordered_samples[fi], ordered_samples, scene, fi
 
-    # Find CAM_FRONT sample_data for this sample
-    sample_sds = sd_by_sample.get(target_sample["token"], [])
-    cam_front_sd = None
-    for sd in sample_sds:
+
+def _nuscenes_find_sensor_sd(meta, sample_token, channel_prefix, exclude_prefixes=None):
+    """Find a keyframe sample_data entry for a given sensor channel."""
+    for sd in meta["sample_data"]:
+        if sd.get("sample_token") != sample_token or not sd.get("is_key_frame", False):
+            continue
         fn = sd.get("filename", "")
-        if "CAM_FRONT/" in fn and "CAM_FRONT_LEFT" not in fn and "CAM_FRONT_RIGHT" not in fn:
-            cam_front_sd = sd
-            break
-
-    if not cam_front_sd:
-        raise Exception(f"No CAM_FRONT data for frame {fi} of scene '{scene_token}'")
-
-    # Download the image
-    filename = cam_front_sd["filename"]
-    img_url = f"{base_url}{filename}"
-    print(f"[nuscenes] Downloading frame {fi} CAM_FRONT: {img_url}")
-    resp = http_requests.get(img_url, timeout=30)
-    resp.raise_for_status()
-    return resp.content, filename
+        if channel_prefix in fn:
+            if exclude_prefixes and any(ex in fn for ex in exclude_prefixes):
+                continue
+            return sd
+    return None
 
 
 def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str, frame_index: int | None = None) -> dict:
-    """nuScenes image-only send: fetch correct frame's front camera, upload to Encord."""
+    """Full nuScenes 3D pipeline: LiDAR PLY + camera + cuboid predictions."""
+    import traceback
+
+    try:
+        return _send_nuscenes_3d(scenario_id, scenario_prefix, frame_index)
+    except Exception as e3d:
+        print(f"[nuscenes] 3D pipeline failed, falling back to image-only: {e3d}")
+        traceback.print_exc()
+
+    # Fallback: image-only upload
+    base_url = _resolve_nuscenes_base_url(scenario_id)
+    if not base_url:
+        raise HTTPException(status_code=400, detail=f"No base_url found for nuScenes scenario {scenario_id}")
+
     client = get_encord()
     dataset_obj = client.get_dataset(DATASET_HASH)
     project = client.get_project(PROJECT_HASH)
-
     fi_label = f"f{frame_index}" if frame_index is not None else "f0"
     title = f"{scenario_prefix}_{fi_label}"
 
-    # Check if already exists
     existing_row = find_existing_data_row(dataset_obj, scenario_prefix)
     if existing_row:
         uid = existing_row.uid
@@ -844,28 +876,200 @@ def _send_nuscenes_to_encord(scenario_id: str, scenario_prefix: str, frame_index
                 return {"success": True, "status": "already_existed", "already_existed": True, "uid": uid, "title": existing_row.title}
             raise
 
-    # Resolve base_url and fetch the correct frame image
-    base_url = _resolve_nuscenes_base_url(scenario_id)
-    if not base_url:
-        raise HTTPException(status_code=400, detail=f"No base_url found for nuScenes scenario {scenario_id}")
+    # Download front camera image
+    meta, _ = _load_nuscenes_metadata(base_url)
+    target_sample, _, _, fi = _nuscenes_resolve_frame(meta, scenario_id, frame_index)
+    cam_sd = _nuscenes_find_sensor_sd(meta, target_sample["token"], "CAM_FRONT/", ["CAM_FRONT_LEFT", "CAM_FRONT_RIGHT"])
+    if not cam_sd:
+        raise HTTPException(status_code=404, detail="No CAM_FRONT data found")
+    img_resp = http_requests.get(f"{base_url}{cam_sd['filename']}", timeout=30)
+    img_resp.raise_for_status()
 
-    image_bytes, _ = _fetch_nuscenes_front_image(base_url, scenario_id, frame_index)
-
-    uid = upload_image_to_encord(dataset_obj, image_bytes, title)
-
+    uid = upload_image_to_encord(dataset_obj, img_resp.content, title)
     try:
         project.create_label_row(uid=uid)
     except Exception as inner:
         if not _is_duplicate_error(inner):
             raise
+    return {"success": True, "status": "uploaded_and_created", "already_existed": False, "uid": uid, "title": title}
+
+
+def _send_nuscenes_3d(scenario_id: str, scenario_prefix: str, frame_index: int | None = None) -> dict:
+    """Full nuScenes 3D pipeline."""
+    import open3d as o3d
+    import traceback
+
+    client = get_encord()
+    fi_label = f"f{frame_index}" if frame_index is not None else "f0"
+    title = f"{scenario_prefix}_{fi_label}"
+
+    # Check if already exists
+    project = client.get_project(PROJECT_HASH)
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == title:
+            return {"success": True, "status": "already_existed", "already_existed": True, "title": title}
+
+    base_url = _resolve_nuscenes_base_url(scenario_id)
+    if not base_url:
+        raise Exception(f"No base_url for {scenario_id}")
+
+    # ── Step 1: Download metadata ──
+    meta, _ = _load_nuscenes_metadata(base_url)
+    target_sample, ordered_samples, scene, fi = _nuscenes_resolve_frame(meta, scenario_id, frame_index)
+
+    # ── Step 2: Download LiDAR bin and convert to PLY ──
+    lidar_sd = _nuscenes_find_sensor_sd(meta, target_sample["token"], "LIDAR_TOP")
+    if not lidar_sd:
+        raise Exception(f"No LIDAR_TOP data for frame {fi}")
+
+    print(f"[nuscenes] Downloading LiDAR: {lidar_sd['filename']}...")
+    lidar_resp = http_requests.get(f"{base_url}{lidar_sd['filename']}", timeout=60)
+    lidar_resp.raise_for_status()
+
+    pts_raw = np.frombuffer(lidar_resp.content, dtype=np.float32).reshape(-1, 5)
+    points = pts_raw[:, 0:3].astype(np.float64)
+    intensity = pts_raw[:, 3].astype(np.float64)
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    norm = (intensity - intensity.min()) / (intensity.max() - intensity.min() + 1e-8)
+    colors_arr = np.stack([norm, norm, norm], axis=1)
+    pcd.colors = o3d.utility.Vector3dVector(colors_arr)
+
+    ply_path = tempfile.mktemp(suffix=".ply")
+    o3d.io.write_point_cloud(ply_path, pcd, write_ascii=True)
+    with open(ply_path, "rb") as f:
+        ply_bytes = f.read()
+    os.unlink(ply_path)
+    n_points = len(points)
+    print(f"[nuscenes] PLY: {n_points} points")
+
+    # ── Step 3: Upload PLY to GCS ──
+    ply_gcs_uri = upload_to_gcs(ply_bytes, f"{NUSCENES_3D_FOLDER}/{title}.ply")
+
+    # ── Step 4: Download front camera image ──
+    cam_sd = _nuscenes_find_sensor_sd(meta, target_sample["token"], "CAM_FRONT/", ["CAM_FRONT_LEFT", "CAM_FRONT_RIGHT"])
+    if not cam_sd:
+        raise Exception(f"No CAM_FRONT data for frame {fi}")
+
+    print(f"[nuscenes] Downloading CAM_FRONT: {cam_sd['filename']}...")
+    cam_resp = http_requests.get(f"{base_url}{cam_sd['filename']}", timeout=30)
+    cam_resp.raise_for_status()
+
+    cam_gcs_uri = upload_to_gcs(cam_resp.content, f"{NUSCENES_3D_FOLDER}/{title}_front.jpg")
+
+    # ── Step 5: Get camera intrinsics from calibrated_sensor ──
+    cam_w, cam_h = 1600, 900
+    cam_fx, cam_fy, cam_ox, cam_oy = 1000.0, 1000.0, 800.0, 450.0
+    cs_token = cam_sd.get("calibrated_sensor_token")
+    if cs_token:
+        for cs in meta["calibrated_sensor"]:
+            if cs["token"] == cs_token:
+                intrinsic = cs.get("camera_intrinsic")
+                if intrinsic and len(intrinsic) >= 2:
+                    cam_fx = intrinsic[0][0]
+                    cam_fy = intrinsic[1][1]
+                    cam_ox = intrinsic[0][2]
+                    cam_oy = intrinsic[1][2]
+                break
+
+    # ── Step 6: Create 3-stream Encord scene ──
+    print(f"[nuscenes] Creating 3-stream scene...")
+    task_created = create_3stream_scene(
+        client, title, ply_gcs_uri, cam_gcs_uri,
+        cam_w=cam_w, cam_h=cam_h, cam_fx=cam_fx, cam_fy=cam_fy, cam_ox=cam_ox, cam_oy=cam_oy,
+    )
+
+    # ── Step 7: Write cuboid predictions ──
+    n_cuboids = 0
+    try:
+        n_cuboids = _write_nuscenes_cuboids(client, meta, target_sample, lidar_sd, title)
+        print(f"[nuscenes] {n_cuboids} cuboids written")
+    except Exception as e:
+        print(f"[nuscenes] Cuboid writing failed: {e}")
+        traceback.print_exc()
 
     return {
         "success": True,
         "status": "uploaded_and_created",
         "already_existed": False,
-        "uid": uid,
         "title": title,
+        "n_points": n_points,
+        "n_cuboids": n_cuboids,
+        "task_created": task_created,
     }
+
+
+def _write_nuscenes_cuboids(client, meta, target_sample, lidar_sd, scene_title) -> int:
+    """Write nuScenes 3D bounding boxes as Encord cuboid labels."""
+    from encord.objects.coordinates import CuboidCoordinates
+
+    # Build lookup maps
+    instance_by_token = {i["token"]: i for i in meta["instance"]}
+    category_by_token = {c["token"]: c for c in meta["category"]}
+    ego_pose_by_token = {ep["token"]: ep for ep in meta["ego_pose"]}
+
+    # Get ego pose for this frame's LIDAR_TOP
+    ego_pose = ego_pose_by_token.get(lidar_sd.get("ego_pose_token", ""))
+    if not ego_pose:
+        return 0
+    ego_matrix = _nuscenes_quat_to_matrix(ego_pose["rotation"], ego_pose["translation"])
+    inv_ego = np.linalg.inv(ego_matrix)
+
+    # Get annotations for the target sample
+    annotations = [a for a in meta["sample_annotation"] if a["sample_token"] == target_sample["token"]]
+    if not annotations:
+        return 0
+
+    ontology = client.get_ontology(LIDAR_ONTOLOGY_HASH)
+    project = client.get_project(PROJECT_HASH)
+
+    target_row = None
+    for lr in project.list_label_rows_v2():
+        if lr.data_title == scene_title:
+            target_row = lr
+            break
+    if not target_row:
+        return 0
+
+    target_row.initialise_labels()
+    n = 0
+    for ann in annotations:
+        # Resolve category name
+        inst = instance_by_token.get(ann.get("instance_token", ""))
+        cat_token = inst.get("category_token", "") if inst else ""
+        cat = category_by_token.get(cat_token)
+        cat_name = cat.get("name", "") if cat else ""
+        ont_name = NUSCENES_ENCORD_CATEGORY_MAP.get(cat_name)
+        if not ont_name:
+            continue
+
+        try:
+            ont_obj = ontology.structure.get_child_by_title(ont_name)
+        except Exception:
+            continue
+
+        # Transform box from global to vehicle frame
+        box_matrix = _nuscenes_quat_to_matrix(ann["rotation"], ann["translation"])
+        box_vehicle = inv_ego @ box_matrix
+        cx, cy, cz = float(box_vehicle[0, 3]), float(box_vehicle[1, 3]), float(box_vehicle[2, 3])
+        heading = float(math.atan2(box_vehicle[1, 0], box_vehicle[0, 0]))
+
+        # nuScenes size is [width, length, height] → Encord size=(length, width, height)
+        width, length, height = ann["size"]
+
+        instance = ont_obj.create_instance()
+        coords = CuboidCoordinates(
+            position=(cx, cy, cz),
+            orientation=(0.0, 0.0, heading),
+            size=(float(length), float(width), float(height)),
+        )
+        instance.set_for_frames(coords, frames=0, confidence=0.95, manual_annotation=False)
+        target_row.add_object_instance(instance)
+        n += 1
+
+    target_row.save()
+    return n
 
 
 # ---------------------------------------------------------------------------
