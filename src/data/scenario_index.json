@@ -2413,7 +2413,7 @@
     "location": "San Francisco, CA",
     "frames": 196,
     "notes": "Highest pedestrian density in validation set. Dawn/dusk lighting. 160 pedestrians in a single frame.",
-    "img_url": null,
+    "img_url": "https://storage.googleapis.com/rafael-encord-waymo/waymo_thumbnails/waymo_160peds_thumb.jpg",
     "gcs_path": "gs://waymo_open_dataset_v_2_0_1/validation/"
   },
   {
@@ -2430,7 +2430,7 @@
     "location": "San Francisco, CA",
     "frames": 199,
     "notes": "Dense downtown pedestrian scene. Daytime. 99 pedestrians in peak frame.",
-    "img_url": null,
+    "img_url": "https://storage.googleapis.com/rafael-encord-waymo/waymo_thumbnails/waymo_99peds_thumb.jpg",
     "gcs_path": "gs://waymo_open_dataset_v_2_0_1/validation/"
   },
   {
@@ -2447,7 +2447,7 @@
     "location": "San Francisco, CA",
     "frames": 199,
     "notes": "Heavy pedestrian and vehicle traffic. Daytime. 94 pedestrians in peak frame.",
-    "img_url": null,
+    "img_url": "https://storage.googleapis.com/rafael-encord-waymo/waymo_thumbnails/waymo_94peds_thumb.jpg",
     "gcs_path": "gs://waymo_open_dataset_v_2_0_1/validation/"
   },
   {
