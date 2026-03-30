@@ -641,9 +641,9 @@ def write_av2_cuboid_predictions(client, project_hash, ontology_hash, scene_titl
 
         instance = ont_obj.create_instance()
         coords = CuboidCoordinates(
-            position=(float(box["tx"]), float(box["ty"]), float(box["tz"])),
+            position=(float(box["tx_m"]), float(box["ty_m"]), float(box["tz_m"])),
             orientation=(roll, pitch, yaw),
-            size=(float(box["length"]), float(box["width"]), float(box["height"])),
+            size=(float(box["length_m"]), float(box["width_m"]), float(box["height_m"])),
         )
         instance.set_for_frames(coords, frames=0, confidence=0.95, manual_annotation=False)
         target_row.add_object_instance(instance)
